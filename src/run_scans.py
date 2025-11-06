@@ -25,10 +25,12 @@ def run_nmap(target: str):
     command = [
         'docker-compose', 'run', '--rm',
         'nmap',
-        target,
         '-sV',
+        '--top-ports', '100',
+        '-n',
         '-Pn',
-        '-oX', '/output/nmap_results.xml'
+        '-oX', '/output/nmap_results.xml',
+        target
     ]
 
     try:
@@ -75,7 +77,6 @@ def run_nuclei(target: str):
         return None
     
 if __name__ == "__main__":
-    # use a safe, public domain for testing
     # scanme.nmap.org is provided by Nmap for testing
     TEST_TARGET = "scanme.nmap.org"
 
