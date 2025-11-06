@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  nmap:
+    image: instrumentisto/nmap:latest
+    # We set the entrypoint so we can pass args directly
+    entrypoint: nmap
+    volumes:
+      # Mount a local './output' dir into the container's '/output'
+      # This is how we get results back to the host
+      - ./output:/output
+
+  nuclei:
+    image: projectdiscovery/nuclei:latest
+    entrypoint: nuclei
+    volumes:
+      # Same volume mount for nuclei
+      - ./output:/output
