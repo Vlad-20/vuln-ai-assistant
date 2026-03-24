@@ -10,6 +10,12 @@ services:
       # This is how we get results back to the host
       - ./output:/output
 
+  subfinder:
+    image: projectdiscovery/subfinder:latest
+    entrypoint: subfinder
+    volumes:
+      - ./output:/output
+
   nuclei:
     image: projectdiscovery/nuclei:latest
     entrypoint: nuclei

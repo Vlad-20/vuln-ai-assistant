@@ -15,6 +15,44 @@ class NormalizedFinding:
     description: str
     raw_evidence: Dict[str, Any] = field(default_factory=dict)
 
+def parse_subfinder_jsonl(jsonl_file: str) -> List[NormalizedFinding]:
+    # parses a Subfinder JSON-Lines output file into a list of NormalizedFinding
+    # each line: {"host": "sub.example.com", "source": [...], "input": "example.com"}
+    print(f"Parsing Subfinder file: {jsonl_file}...")
+    findings = []
+    try:
+        with open(jsonl_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    host = data.get('host', 'unknown')
+                    source = data.get('source', '')
+                    sources_str = ', '.join(source) if isinstance(source, list) else source
+                    input_domain = data.get('input', 'unknown')
+
+                    finding = NormalizedFinding(
+                        host=host,
+                        port=None,
+                        protocol=None,
+                        finding_name=f"Subdomain Discovered: {host}",
+                        severity="info",
+                        source_tool="subfinder",
+                        description=f"Subdomain '{host}' discovered for '{input_domain}' via sources: {sources_str}",
+                        raw_evidence=data
+                    )
+                    findings.append(finding)
+                except json.JSONDecodeError:
+                    print(f"Skipping invalid JSON line: {line}")
+
+        print(f"Found {len(findings)} Subfinder findings.")
+        return findings
+    except FileNotFoundError:
+        print(f"Subfinder output file not found: {jsonl_file}")
+        return []
+
 def parse_nmap_xml(xml_file: str) -> List[NormalizedFinding]:
     # parses an Nmap XML output file into a list of NormalizedFinding
     print(f"Parsing Nmap file: {xml_file}...")

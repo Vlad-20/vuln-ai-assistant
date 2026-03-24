@@ -5,21 +5,26 @@ from dataclasses import asdict
 from pprint import pprint
 import os
 
-TEST_TARGET = "scanme.nmap.org"
+TEST_TARGET = "eltralogis.com"
 OUTPUT_FILE = os.path.join(run_scans.OUTPUT_DIR, 'normalized_findings.json')
 
 def main():
     print("*** Starting FULL Scan and Parse pipeline ***")
 
-    # run scans
+    # run scans (subfinder first)
     run_scans.setup_environment()
+    subfinder_file = run_scans.run_subfinder(TEST_TARGET)
     nmap_file = run_scans.run_nmap(TEST_TARGET)
     nuclei_file = run_scans.run_nuclei(TEST_TARGET)
 
     print("\n*** Starting normalization ***")
     all_findings = []
 
-    # normalize nmap & nuclei
+    # normalize subfinder, nmap & nuclei
+    if subfinder_file:
+        subfinder_findings = parsers.parse_subfinder_jsonl(subfinder_file)
+        all_findings.extend(subfinder_findings)
+
     if nmap_file:
         nmap_findings = parsers.parse_nmap_xml(nmap_file)
         all_findings.extend(nmap_findings)

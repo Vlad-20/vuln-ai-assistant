@@ -4,6 +4,7 @@ import shutil
 
 # Define output directory
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'output')
+SUBFINDER_OUT = os.path.join(OUTPUT_DIR, 'subfinder_results.jsonl')
 NMAP_OUT = os.path.join(OUTPUT_DIR, 'nmap_results.xml')
 NUCLEI_OUT = os.path.join(OUTPUT_DIR, 'nuclei_results.jsonl')
 
@@ -14,6 +15,38 @@ def setup_environment():
         shutil.rmtree(OUTPUT_DIR)
     os.makedirs(OUTPUT_DIR)
     print(f"Created new output directory: {OUTPUT_DIR}")
+
+def run_subfinder(domain: str):
+    # Run Subfinder via docker-compose
+    # -d: target domain
+    # -json: output in JSON format (one record per line)
+    # -all: use all sources (including slow ones)
+    # -recursive: enable recursive subdomain enumeration
+    # -silent: suppress banner/progress output
+    # -o: output to file
+    print(f"[SUBFINDER] Starting subdomain enumeration on {domain}...")
+    command = [
+        'docker-compose', 'run', '--rm',
+        'subfinder',
+        '-d', domain,
+        '-json',
+        '-all',
+        '-recursive',
+        '-silent',
+        '-o', '/output/subfinder_results.jsonl'
+    ]
+
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        print(f"[SUBFINDER] Enumeration complete. Results saved to {SUBFINDER_OUT}")
+        return SUBFINDER_OUT
+    except subprocess.CalledProcessError as e:
+        if os.path.exists(SUBFINDER_OUT):
+            print(f"[SUBFINDER] Enumeration finished (with non-zero exit). Results saved to {SUBFINDER_OUT}")
+            return SUBFINDER_OUT
+        print(f"[SUBFINDER] ERROR running Subfinder:")
+        print(e.stderr)
+        return None
 
 def run_nmap(target: str):
     # Run Nmap via docker-compose
