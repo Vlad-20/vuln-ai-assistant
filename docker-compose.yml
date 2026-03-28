@@ -3,7 +3,6 @@ version: '3.8'
 services:
   nmap:
     image: instrumentisto/nmap:latest
-    # We set the entrypoint so we can pass args directly
     entrypoint: nmap
     volumes:
       # Mount a local './output' dir into the container's '/output'
@@ -13,6 +12,31 @@ services:
   subfinder:
     image: projectdiscovery/subfinder:latest
     entrypoint: subfinder
+    volumes:
+      - ./output:/output
+
+  httpx:
+    image: projectdiscovery/httpx:latest
+    entrypoint: httpx
+    volumes:
+      - ./output:/output
+
+  feroxbuster:
+    image: epi052/feroxbuster:latest
+    entrypoint: feroxbuster
+    volumes:
+      - ./output:/output
+      # Place wordlists (e.g. common.txt) in ./wordlists on the host
+      - ./wordlists:/wordlists
+
+  katana:
+    image: projectdiscovery/katana:latest
+    entrypoint: katana
+    volumes:
+      - ./output:/output
+
+  wpscan:
+    image: wpscanteam/wpscan:latest
     volumes:
       - ./output:/output
 
