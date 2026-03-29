@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VulnAI Scanner</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #0d1117;
+      --surface:    #161b22;
+      --surface2:   #21262d;
+      --border:     #30363d;
+      --text:       #e6edf3;
+      --muted:      #7d8590;
+      --blue:       #4493f8;
+      --blue-dim:   rgba(68, 147, 248, 0.12);
+      --green:      #3fb950;
+      --green-dim:  rgba(63, 185, 80, 0.12);
+      --red:        #f85149;
+      --red-dim:    rgba(248, 81, 73, 0.12);
+      --gray:       #484f58;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2.5rem 1rem 4rem;
+      line-height: 1.5;
+    }
+
+    .wrap {
+      width: 100%;
+      max-width: 720px;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    /* ── Header ── */
+    header {
+      text-align: center;
+      padding: 0.5rem 0 1rem;
+    }
+    header h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.4px;
+    }
+    header h1 em {
+      font-style: normal;
+      color: var(--blue);
+    }
+    header p {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-top: 0.3rem;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+    }
+    .card-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 0.9rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* ── Input card ── */
+    .input-row {
+      display: flex;
+      gap: 0.6rem;
+    }
+    input[type="text"] {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--text);
+      font-size: 0.9rem;
+      padding: 0.55rem 0.9rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus { border-color: var(--blue); }
+    input[type="text"]::placeholder { color: var(--muted); }
+
+    .btn {
+      border: none;
+      border-radius: 7px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 0.88rem;
+      font-weight: 600;
+      padding: 0.55rem 1.3rem;
+      transition: opacity 0.15s, transform 0.1s;
+      white-space: nowrap;
+    }
+    .btn:hover:not(:disabled) { opacity: 0.85; }
+    .btn:active:not(:disabled) { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .btn-primary  { background: var(--blue); }
+    .btn-success  { background: var(--green); }
+    .btn-ghost {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    /* ── Steps ── */
+    .steps { display: flex; flex-direction: column; gap: 0.45rem; }
+
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-left-width: 3px;
+      border-left-color: var(--border);
+      border-radius: 8px;
+      padding: 0.65rem 1rem;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .step.running {
+      border-left-color: var(--blue);
+      background: var(--blue-dim);
+    }
+    .step.success  { border-left-color: var(--green); }
+    .step.error    { border-left-color: var(--red); }
+    .step.skipped  { opacity: 0.5; }
+
+    /* Circular indicator */
+    .ind {
+      width: 26px; height: 26px;
+      border-radius: 50%;
+      border: 2px solid var(--gray);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; color: var(--muted);
+      flex-shrink: 0;
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
+    }
+    .ind.running {
+      border-color: rgba(68,147,248,0.35);
+      border-top-color: var(--blue);
+      animation: spin 0.75s linear infinite;
+      color: transparent;
+    }
+    .ind.success { background: var(--green); border-color: var(--green); color: #fff; }
+    .ind.error   { background: var(--red);   border-color: var(--red);   color: #fff; }
+    .ind.skipped { background: var(--gray);  border-color: var(--gray);  color: #fff; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .step-body { flex: 1; min-width: 0; }
+    .step-name {
+      font-size: 0.88rem;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .step-sub {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.1rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .step-right {
+      display: flex; flex-direction: column; align-items: flex-end; gap: 0.2rem;
+      flex-shrink: 0;
+    }
+    .badge {
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+    }
+    .badge-pending { color: var(--muted); }
+    .badge-running { color: var(--blue);  background: var(--blue-dim); }
+    .badge-success { color: var(--green); background: var(--green-dim); }
+    .badge-error   { color: var(--red);   background: var(--red-dim); }
+    .badge-skipped { color: var(--muted); background: var(--surface); }
+
+    .step-timer {
+      font-size: 0.75rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      min-width: 2.5rem;
+      text-align: right;
+    }
+
+    /* ── Log ── */
+    .log-box {
+      background: #010409;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 0.7rem 0.9rem;
+      font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
+      font-size: 0.75rem;
+      height: 190px;
+      overflow-y: auto;
+      color: #8b949e;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    .log-box .le { line-height: 1.55; }
+    .log-box .le-info    { color: #8b949e; }
+    .log-box .le-step    { color: var(--blue); font-weight: 600; }
+    .log-box .le-ok      { color: var(--green); }
+    .log-box .le-err     { color: var(--red); }
+
+    /* ── Results ── */
+    #results-card { display: none; }
+
+    .stat-row {
+      display: flex; gap: 0.75rem; margin-bottom: 1rem;
+    }
+    .stat {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+      text-align: center;
+    }
+    .stat-val {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--blue);
+      line-height: 1;
+    }
+    .stat-lbl {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 0.35rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .btn-row { display: flex; gap: 0.6rem; }
+    .btn-row .btn { flex: 1; padding: 0.65rem; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Vuln<em>AI</em> Scanner</h1>
+    <p>Automated multi-stage reconnaissance &amp; vulnerability assessment</p>
+  </header>
+
+  <!-- Target input -->
+  <div class="card">
+    <div class="card-label">
+      <span>Target</span>
+      <span id="global-timer" style="font-variant-numeric:tabular-nums;"></span>
+    </div>
+    <div class="input-row">
+      <input type="text" id="target" placeholder="e.g. example.com"
+             autocomplete="off" spellcheck="false" />
+      <button class="btn btn-primary" id="scan-btn" onclick="startScan()">Scan</button>
+    </div>
+  </div>
+
+  <!-- Pipeline steps -->
+  <div class="card">
+    <div class="card-label">Scan Pipeline</div>
+    <div class="steps" id="steps"></div>
+  </div>
+
+  <!-- Live log -->
+  <div class="card">
+    <div class="card-label">Live Log</div>
+    <div class="log-box" id="log"></div>
+  </div>
+
+  <!-- Results (hidden until done) -->
+  <div class="card" id="results-card">
+    <div class="card-label">Results</div>
+    <div class="stat-row">
+      <div class="stat">
+        <div class="stat-val" id="stat-total">0</div>
+        <div class="stat-lbl">Total Findings</div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-success" onclick="downloadResults()">↓ &nbsp;Download Results (JSON)</button>
+      <button class="btn btn-ghost"   onclick="newScan()">↺ &nbsp;New Scan</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ── Step definitions ──────────────────────────────────────────────────────
+  const STEPS = [
+    { id: 'subfinder',   label: 'Subdomain Enumeration',        tool: 'subfinder'   },
+    { id: 'httpx',       label: 'HTTP Probing & Tech Detection', tool: 'httpx'       },
+    { id: 'nmap',        label: 'Port & Service Discovery',      tool: 'nmap'        },
+    { id: 'feroxbuster', label: 'Directory Discovery',           tool: 'feroxbuster' },
+    { id: 'katana',      label: 'URL Crawling',                  tool: 'katana'      },
+    { id: 'wpscan',      label: 'WordPress Scanning',            tool: 'wpscan'      },
+    { id: 'nuclei',      label: 'Vulnerability Scanning',        tool: 'nuclei'      },
+    { id: 'normalize',   label: 'Normalizing Findings',          tool: 'internal'    },
+  ];
+
+  const STATUS_ICON = { success: '✓', error: '✗', skipped: '—' };
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let stepTimers   = {};   // id → {iv, t0}
+  let globalTimerIv = null;
+  let globalStart   = null;
+  let es            = null;
+
+  // ── Build step cards ──────────────────────────────────────────────────────
+  function buildSteps() {
+    const list = document.getElementById('steps');
+    list.innerHTML = STEPS.map((s, i) => `
+      <div class="step" id="step-${s.id}">
+        <div class="ind" id="ind-${s.id}">${i + 1}</div>
+        <div class="step-body">
+          <div class="step-name" id="name-${s.id}">${s.label}</div>
+          <div class="step-sub"  id="sub-${s.id}">${s.tool}</div>
+        </div>
+        <div class="step-right">
+          <span class="badge badge-pending" id="badge-${s.id}">pending</span>
+          <span class="step-timer"          id="timer-${s.id}"></span>
+        </div>
+      </div>`).join('');
+  }
+
+  // ── Reset all to pending ──────────────────────────────────────────────────
+  function resetSteps() {
+    Object.values(stepTimers).forEach(t => clearInterval(t.iv));
+    stepTimers = {};
+    stopGlobalTimer();
+
+    STEPS.forEach((s, i) => {
+      document.getElementById(`step-${s.id}`).className  = 'step';
+      const ind = document.getElementById(`ind-${s.id}`);
+      ind.className = 'ind';
+      ind.textContent = i + 1;
+      document.getElementById(`name-${s.id}`).textContent  = s.label;
+      document.getElementById(`sub-${s.id}`).textContent   = s.tool;
+      const b = document.getElementById(`badge-${s.id}`);
+      b.className = 'badge badge-pending';
+      b.textContent = 'pending';
+      document.getElementById(`timer-${s.id}`).textContent = '';
+    });
+
+    document.getElementById('log').innerHTML = '';
+    document.getElementById('results-card').style.display = 'none';
+    document.getElementById('global-timer').textContent = '';
+  }
+
+  // ── Timer helpers ─────────────────────────────────────────────────────────
+  function fmtTime(ms) {
+    const s = Math.floor(ms / 1000);
+    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+  }
+
+  function startGlobalTimer() {
+    globalStart = Date.now();
+    globalTimerIv = setInterval(() => {
+      document.getElementById('global-timer').textContent =
+        'Elapsed: ' + fmtTime(Date.now() - globalStart);
+    }, 500);
+  }
+
+  function stopGlobalTimer() {
+    clearInterval(globalTimerIv);
+    globalTimerIv = null;
+  }
+
+  // ── Step state updates ────────────────────────────────────────────────────
+  function setRunning(id, label) {
+    const el   = document.getElementById(`step-${id}`);
+    const ind  = document.getElementById(`ind-${id}`);
+    const bdg  = document.getElementById(`badge-${id}`);
+    const name = document.getElementById(`name-${id}`);
+
+    el.className   = 'step running';
+    ind.className  = 'ind running';
+    ind.textContent = '';
+    bdg.className  = 'badge badge-running';
+    bdg.textContent = 'running';
+    if (label) name.textContent = label;
+
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      document.getElementById(`timer-${id}`).textContent = fmtTime(Date.now() - t0);
+    }, 500);
+    stepTimers[id] = { iv, t0 };
+  }
+
+  function setDone(id, status, msg) {
+    const el  = document.getElementById(`step-${id}`);
+    const ind = document.getElementById(`ind-${id}`);
+    const bdg = document.getElementById(`badge-${id}`);
+    const sub = document.getElementById(`sub-${id}`);
+
+    if (stepTimers[id]) {
+      clearInterval(stepTimers[id].iv);
+      document.getElementById(`timer-${id}`).textContent =
+        fmtTime(Date.now() - stepTimers[id].t0);
+      delete stepTimers[id];
+    }
+
+    el.className   = `step ${status}`;
+    ind.className  = `ind ${status}`;
+    ind.textContent = STATUS_ICON[status] || '?';
+    bdg.className  = `badge badge-${status}`;
+    bdg.textContent = status;
+    if (msg) sub.textContent = msg;
+  }
+
+  // ── Log helpers ───────────────────────────────────────────────────────────
+  function log(msg, cls = 'le-info') {
+    const box = document.getElementById('log');
+    const p   = document.createElement('div');
+    p.className   = 'le ' + cls;
+    p.textContent = msg;
+    box.appendChild(p);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  // ── SSE event handler ─────────────────────────────────────────────────────
+  function handleEvent(ev) {
+    switch (ev.type) {
+      case 'step_start':
+        setRunning(ev.step_id, ev.label);
+        log('▶  ' + ev.label, 'le-step');
+        break;
+      case 'step_end':
+        setDone(ev.step_id, ev.status, ev.message);
+        if (ev.message) log('   ' + ev.message,
+          ev.status === 'error' ? 'le-err' : ev.status === 'success' ? 'le-ok' : 'le-info');
+        break;
+      case 'log':
+        log('   ' + ev.message);
+        break;
+      case 'scan_complete':
+        onComplete(ev.total_findings);
+        break;
+      case 'scan_error':
+        log('✗  ' + ev.message, 'le-err');
+        resetBtn();
+        if (es) { es.close(); es = null; }
+        break;
+    }
+  }
+
+  // ── SSE connection ────────────────────────────────────────────────────────
+  function connectSSE() {
+    if (es) es.close();
+    es = new EventSource('/events');
+    es.onmessage = e => {
+      try { handleEvent(JSON.parse(e.data)); } catch (_) {}
+    };
+  }
+
+  // ── Scan complete ─────────────────────────────────────────────────────────
+  function onComplete(total) {
+    stopGlobalTimer();
+    log('✓  Scan complete!', 'le-ok');
+    document.getElementById('stat-total').textContent = total.toLocaleString();
+    const rc = document.getElementById('results-card');
+    rc.style.display = 'block';
+    rc.scrollIntoView({ behavior: 'smooth' });
+    resetBtn();
+    if (es) { es.close(); es = null; }
+  }
+
+  // ── Button helpers ────────────────────────────────────────────────────────
+  function resetBtn() {
+    const b = document.getElementById('scan-btn');
+    b.disabled    = false;
+    b.textContent = 'Scan';
+  }
+
+  // ── Public actions ────────────────────────────────────────────────────────
+  function startScan() {
+    const target = document.getElementById('target').value.trim();
+    if (!target) { document.getElementById('target').focus(); return; }
+
+    resetSteps();
+    startGlobalTimer();
+
+    const btn = document.getElementById('scan-btn');
+    btn.disabled    = true;
+    btn.textContent = 'Scanning…';
+
+    log('Starting scan for: ' + target, 'le-step');
+
+    fetch('/scan', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ target }),
+    })
+    .then(r => r.json().then(d => ({ ok: r.ok, d })))
+    .then(({ ok, d }) => {
+      if (!ok) throw new Error(d.error || 'Failed to start scan.');
+      connectSSE();
+    })
+    .catch(err => {
+      log('✗  ' + err.message, 'le-err');
+      stopGlobalTimer();
+      resetBtn();
+    });
+  }
+
+  function newScan() {
+    resetSteps();
+    document.getElementById('target').focus();
+    resetBtn();
+  }
+
+  function downloadResults() {
+    window.location.href = '/download';
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    buildSteps();
+    document.getElementById('target').addEventListener('keydown', e => {
+      if (e.key === 'Enter') startScan();
+    });
+    log('Enter a domain above and press Scan to begin.');
+  });
+</script>
+</body>
+</html>

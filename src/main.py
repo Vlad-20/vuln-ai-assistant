@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict
 import os
 
-TEST_TARGET = "eltralogis.com"
+TEST_TARGET = "vladvlaicu.com"
 OUTPUT_FILE = os.path.join(run_scans.OUTPUT_DIR, 'normalized_findings.json')
 
 
@@ -25,10 +25,14 @@ def main():
     # Derive live hosts and WordPress targets for downstream steps
     live_urls: list = []
     wordpress_urls: list = []
+    print(f"[DEBUG] httpx_file = {httpx_file!r}")
     if httpx_file:
         live_urls, wordpress_urls = parsers.extract_live_hosts(httpx_file)
         print(f"[PIPELINE] {len(live_urls)} live host(s) found, "
               f"{len(wordpress_urls)} WordPress host(s) detected.")
+        print(f"[DEBUG] live_urls = {live_urls}")
+    else:
+        print("[DEBUG] httpx_file is None — httpx produced no usable output.")
 
     # ------------------------------------------------------------------
     # Step 3 — Port & Service Discovery (nmap) — against root domain

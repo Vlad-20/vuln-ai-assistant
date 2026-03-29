@@ -23,7 +23,7 @@ SUBFINDER_TIMEOUT = 300
 HTTPX_TIMEOUT     = 300
 NMAP_TIMEOUT      = 300
 FEROXBUSTER_TIMEOUT = 300
-KATANA_TIMEOUT    = 180
+KATANA_TIMEOUT    = 300
 WPSCAN_TIMEOUT    = 300
 NUCLEI_TIMEOUT    = 600
 
@@ -53,12 +53,45 @@ def _sanitize_filename(url: str) -> str:
     return name.strip('_')
 
 
-def _run(command: list, timeout: int):
-    """Run a subprocess and return CompletedProcess, or raise on error/timeout."""
-    return subprocess.run(
-        command, check=True, capture_output=True,
-        encoding='utf-8', errors='replace', timeout=timeout
+def _stop_service_containers(service_name: str):
+    """Kill any Docker containers still running for the given compose service."""
+    try:
+        result = subprocess.run(
+            ['docker', 'ps', '-q', '--filter', f'label=com.docker.compose.service={service_name}'],
+            capture_output=True, text=True, encoding='utf-8', timeout=15
+        )
+        for cid in result.stdout.strip().splitlines():
+            if cid:
+                subprocess.run(['docker', 'stop', cid], capture_output=True, timeout=15)
+                print(f"[{service_name.upper()}] Stopped orphaned container {cid[:12]}.")
+    except Exception as e:
+        print(f"[{service_name.upper()}] Warning: could not stop orphaned container: {e}")
+
+
+def _run(command: list, timeout: int, service_name: str = None, stdin_data: str = None):
+    """Run a subprocess, raise CalledProcessError or TimeoutExpired on failure.
+    On timeout, also stops any orphaned Docker containers for the service.
+    Pass stdin_data to pipe text into the process's stdin."""
+    proc = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE if stdin_data is not None else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding='utf-8',
+        errors='replace'
     )
+    try:
+        stdout, stderr = proc.communicate(input=stdin_data, timeout=timeout)
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, command, output=stdout, stderr=stderr)
+        return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        if service_name:
+            _stop_service_containers(service_name)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +107,7 @@ def run_subfinder(domain: str):
         '-o', '/output/subfinder_results.jsonl'
     ]
     try:
-        _run(command, SUBFINDER_TIMEOUT)
+        _run(command, SUBFINDER_TIMEOUT, 'subfinder')
         print(f"[SUBFINDER] Complete. Results: {SUBFINDER_OUT}")
         return SUBFINDER_OUT
     except subprocess.TimeoutExpired:
@@ -92,61 +125,56 @@ def run_subfinder(domain: str):
 # Step 2 — httpx
 # ---------------------------------------------------------------------------
 
-def _build_hosts_file(subfinder_jsonl: str, original_domain: str) -> str:
-    """Extract hosts from subfinder JSONL and write a plain-text list for httpx."""
-    hosts = {original_domain}  # always include the root domain
-
+def _collect_hosts(subfinder_jsonl: str, original_domain: str) -> set:
+    """Return the set of hosts to probe: root domain + all subfinder results."""
+    hosts = {original_domain}
     if subfinder_jsonl and _is_nonempty(subfinder_jsonl):
         try:
-            with open(subfinder_jsonl, 'r') as f:
+            with open(subfinder_jsonl, 'r', encoding='utf-8', errors='replace') as f:
                 for line in f:
                     line = line.strip()
                     if not line:
                         continue
                     try:
-                        data = json.loads(line)
-                        host = data.get('host')
+                        host = json.loads(line).get('host')
                         if host:
                             hosts.add(host)
                     except json.JSONDecodeError:
                         pass
         except Exception as e:
             print(f"[HTTPX] Warning: could not read subfinder output: {e}")
-
-    with open(HOSTS_FILE, 'w') as f:
-        f.write('\n'.join(sorted(hosts)))
-
-    print(f"[HTTPX] Built hosts file with {len(hosts)} entries.")
-    return HOSTS_FILE
+    return hosts
 
 
 def run_httpx(subfinder_file: str, original_domain: str):
     print(f"[HTTPX] Starting HTTP probing and tech fingerprinting...")
-    _build_hosts_file(subfinder_file, original_domain)
+    hosts = _collect_hosts(subfinder_file, original_domain)
+    print(f"[HTTPX] Probing {len(hosts)} host(s).")
+
+    # Pipe hosts via stdin to avoid Windows/WSL2 volume-read issues with -l flag
+    hosts_input = '\n'.join(sorted(hosts)) + '\n'
 
     command = [
-        'docker-compose', 'run', '--rm', 'httpx',
-        '-l', '/output/hosts.txt',
+        'docker-compose', 'run', '--rm', '-T',  # -T disables TTY so stdin can be piped
+        'httpx',
         '-json', '-sc', '-title', '-td', '-server', '-cdn', '-ip',
         '-o', '/output/httpx_results.jsonl',
-        '-timeout', '5',    # max 5s per HTTP request
-        '-retries', '0',    # no retries on failure
-        '-no-color'
+        '-silent',
     ]
     try:
-        _run(command, HTTPX_TIMEOUT)
-        print(f"[HTTPX] Complete. Results: {HTTPX_OUT}")
+        _run(command, HTTPX_TIMEOUT, 'httpx', stdin_data=hosts_input)
+        if _is_nonempty(HTTPX_OUT):
+            print(f"[HTTPX] Complete. Results: {HTTPX_OUT}")
+        else:
+            print("[HTTPX] Complete — no live hosts responded.")
         return HTTPX_OUT
     except subprocess.TimeoutExpired:
-        print(f"[HTTPX] Timed out after {HTTPX_TIMEOUT}s. Waiting for container to flush output...")
+        print(f"[HTTPX] Timed out after {HTTPX_TIMEOUT}s. Using partial results if available.")
         time.sleep(8)
-        return HTTPX_OUT if _is_nonempty(HTTPX_OUT) else None
+        return HTTPX_OUT if os.path.exists(HTTPX_OUT) else None
     except subprocess.CalledProcessError as e:
-        if _is_nonempty(HTTPX_OUT):
-            print(f"[HTTPX] Finished with non-zero exit. Results: {HTTPX_OUT}")
-            return HTTPX_OUT
-        print(f"[HTTPX] ERROR: {e.stderr}")
-        return None
+        print(f"[HTTPX] ERROR (exit {e.returncode}): {e.stderr.strip()}")
+        return HTTPX_OUT if os.path.exists(HTTPX_OUT) else None
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +219,7 @@ def run_nmap(target: str):
         target
     ]
     try:
-        _run(command, NMAP_TIMEOUT)
+        _run(command, NMAP_TIMEOUT, 'nmap')
     except subprocess.TimeoutExpired:
         print(f"[NMAP] Timed out after {NMAP_TIMEOUT}s. Using partial results if available.")
         if not _is_nonempty(NMAP_XML):
@@ -230,7 +258,7 @@ def run_feroxbuster(url: str):
         '-q'
     ]
     try:
-        _run(command, FEROXBUSTER_TIMEOUT)
+        _run(command, FEROXBUSTER_TIMEOUT, 'feroxbuster')
         print(f"[FEROXBUSTER] Complete for {url}. Results: {out_local}")
         return out_local
     except subprocess.TimeoutExpired:
@@ -256,13 +284,12 @@ def run_katana(url: str):
 
     command = [
         'docker-compose', 'run', '--rm', 'katana',
-        '-json', '-d', '3',
+        '-jsonl',
         '-u', url,
-        '-o', out_container,
-        '-silent'
+        '-o', out_container
     ]
     try:
-        _run(command, KATANA_TIMEOUT)
+        _run(command, KATANA_TIMEOUT, 'katana')
         print(f"[KATANA] Complete for {url}. Results: {out_local}")
         return out_local
     except subprocess.TimeoutExpired:
@@ -291,13 +318,13 @@ def run_wpscan(url: str):
         '--url', url,
         '--format', 'json',
         '-o', out_container,
-        '--no-banner'
+        '--random-user-agent'
     ]
     if WPSCAN_API_TOKEN:
         command += ['--api-token', WPSCAN_API_TOKEN]
 
     try:
-        _run(command, WPSCAN_TIMEOUT)
+        _run(command, WPSCAN_TIMEOUT, 'wpscan')
         print(f"[WPSCAN] Complete for {url}. Results: {out_local}")
         return out_local
     except subprocess.TimeoutExpired:
@@ -322,19 +349,19 @@ def run_nuclei(live_urls: list):
 
     print(f"[NUCLEI] Starting vulnerability scan on {len(live_urls)} target(s)...")
 
-    with open(NUCLEI_TARGETS_FILE, 'w') as f:
-        f.write('\n'.join(live_urls))
+    # Pipe targets via stdin to avoid Windows/WSL2 volume-read issues with -l flag
+    targets_input = '\n'.join(live_urls) + '\n'
 
     command = [
-        'docker-compose', 'run', '--rm', 'nuclei',
-        '-l', '/output/nuclei_targets.txt',
+        'docker-compose', 'run', '--rm', '-T',  # -T disables TTY so stdin can be piped
+        'nuclei',
         '-as',
         '-jsonl',
         '-o', '/output/nuclei_results.jsonl',
         '-silent'
     ]
     try:
-        _run(command, NUCLEI_TIMEOUT)
+        _run(command, NUCLEI_TIMEOUT, 'nuclei', stdin_data=targets_input)
         print(f"[NUCLEI] Complete. Results: {NUCLEI_OUT}")
         return NUCLEI_OUT
     except subprocess.TimeoutExpired:
