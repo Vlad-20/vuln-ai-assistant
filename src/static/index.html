@@ -117,6 +117,7 @@
     .btn:active:not(:disabled) { transform: scale(0.97); }
     .btn:disabled { opacity: 0.35; cursor: not-allowed; }
     .btn-primary  { background: var(--blue); }
+    .btn-danger   { background: var(--red); }
     .btn-success  { background: var(--green); }
     .btn-ghost {
       background: var(--surface2);
@@ -282,6 +283,7 @@
       <input type="text" id="target" placeholder="e.g. example.com"
              autocomplete="off" spellcheck="false" />
       <button class="btn btn-primary" id="scan-btn" onclick="startScan()">Scan</button>
+      <button class="btn btn-danger"  id="stop-btn" onclick="stopScan()" style="display:none">Stop</button>
     </div>
   </div>
 
@@ -469,8 +471,16 @@
         break;
       case 'scan_error':
         log('✗  ' + ev.message, 'le-err');
+        stopGlobalTimer();
         resetBtn();
         if (es) { es.close(); es = null; }
+        // Show results card if partial findings were saved
+        if (ev.findings != null) {
+          document.getElementById('stat-total').textContent = ev.findings.toLocaleString();
+          const rc = document.getElementById('results-card');
+          rc.style.display = 'block';
+          rc.scrollIntoView({ behavior: 'smooth' });
+        }
         break;
     }
   }
@@ -498,22 +508,37 @@
 
   // ── Button helpers ────────────────────────────────────────────────────────
   function resetBtn() {
-    const b = document.getElementById('scan-btn');
-    b.disabled    = false;
-    b.textContent = 'Scan';
+    const scanBtn = document.getElementById('scan-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    scanBtn.disabled    = false;
+    scanBtn.textContent = 'Scan';
+    stopBtn.style.display = 'none';
+  }
+
+  function setScanningBtn() {
+    const scanBtn = document.getElementById('scan-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    scanBtn.disabled    = true;
+    scanBtn.textContent = 'Scanning…';
+    stopBtn.style.display = '';
+    stopBtn.disabled = false;
   }
 
   // ── Public actions ────────────────────────────────────────────────────────
+  function stopScan() {
+    const stopBtn = document.getElementById('stop-btn');
+    stopBtn.disabled = true;
+    stopBtn.textContent = 'Stopping…';
+    fetch('/stop', { method: 'POST' }).catch(() => {});
+  }
+
   function startScan() {
     const target = document.getElementById('target').value.trim();
     if (!target) { document.getElementById('target').focus(); return; }
 
     resetSteps();
     startGlobalTimer();
-
-    const btn = document.getElementById('scan-btn');
-    btn.disabled    = true;
-    btn.textContent = 'Scanning…';
+    setScanningBtn();
 
     log('Starting scan for: ' + target, 'le-step');
 

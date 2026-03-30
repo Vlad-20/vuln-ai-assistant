@@ -4,7 +4,33 @@ import shutil
 import json
 import re
 import time
+import threading
 import xml.etree.ElementTree as ET
+
+# Holds the currently running subprocess so it can be killed on demand.
+_current_proc: subprocess.Popen = None
+_proc_lock = threading.Lock()
+_stop_requested = threading.Event()
+
+
+def request_stop():
+    """Signal the pipeline to stop and kill the current subprocess."""
+    _stop_requested.set()
+    with _proc_lock:
+        if _current_proc is not None:
+            try:
+                _current_proc.kill()
+            except Exception:
+                pass
+
+
+def is_stop_requested() -> bool:
+    return _stop_requested.is_set()
+
+
+def reset_stop():
+    _stop_requested.clear()
+
 
 # Define output directory
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'output')
@@ -72,6 +98,7 @@ def _run(command: list, timeout: int, service_name: str = None, stdin_data: str 
     """Run a subprocess, raise CalledProcessError or TimeoutExpired on failure.
     On timeout, also stops any orphaned Docker containers for the service.
     Pass stdin_data to pipe text into the process's stdin."""
+    global _current_proc
     proc = subprocess.Popen(
         command,
         stdin=subprocess.PIPE if stdin_data is not None else None,
@@ -81,6 +108,8 @@ def _run(command: list, timeout: int, service_name: str = None, stdin_data: str 
         encoding='utf-8',
         errors='replace'
     )
+    with _proc_lock:
+        _current_proc = proc
     try:
         stdout, stderr = proc.communicate(input=stdin_data, timeout=timeout)
         if proc.returncode != 0:
@@ -92,6 +121,9 @@ def _run(command: list, timeout: int, service_name: str = None, stdin_data: str 
         if service_name:
             _stop_service_containers(service_name)
         raise
+    finally:
+        with _proc_lock:
+            _current_proc = None
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +135,7 @@ def run_subfinder(domain: str):
     command = [
         'docker-compose', 'run', '--rm', 'subfinder',
         '-d', domain,
-        '-json', '-all', '-recursive', '-silent',
+        '-json', '-all', '-silent',
         '-o', '/output/subfinder_results.jsonl'
     ]
     try:
@@ -278,20 +310,28 @@ def run_feroxbuster(url: str):
 
 def run_katana(url: str):
     print(f"[KATANA] Starting URL crawling on {url}...")
+    # Ensure the URL has a scheme — katana requires http:// or https://
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
     safe_name = _sanitize_filename(url)
     out_container = f'/output/katana_{safe_name}.jsonl'
     out_local = os.path.join(OUTPUT_DIR, f'katana_{safe_name}.jsonl')
 
+    # -T disables TTY so pipes work cleanly.
+    # -d 2 caps crawl depth so katana finishes before the timeout kills it.
+    # -jsonl + -o writes JSON lines directly to the file via the mounted volume.
     command = [
-        'docker-compose', 'run', '--rm', 'katana',
-        '-jsonl',
+        'docker-compose', 'run', '--rm', '-T', 'katana',
         '-u', url,
-        '-o', out_container
+        '-jsonl',
+        '-o', out_container,
+        '-d', '2',
+        '-silent',
     ]
     try:
         _run(command, KATANA_TIMEOUT, 'katana')
         print(f"[KATANA] Complete for {url}. Results: {out_local}")
-        return out_local
+        return out_local if _is_nonempty(out_local) else None
     except subprocess.TimeoutExpired:
         print(f"[KATANA] Timed out after {KATANA_TIMEOUT}s for {url}. Using partial results if available.")
         return out_local if _is_nonempty(out_local) else None

@@ -51,10 +51,19 @@ def start_scan():
         except queue.Empty:
             break
 
+    run_scans.reset_stop()
     _state['output_file'] = None
     _scan_running.set()
     threading.Thread(target=_run_pipeline, args=(target,), daemon=True).start()
     return jsonify({'status': 'started'})
+
+
+@app.route('/stop', methods=['POST'])
+def stop_scan():
+    if not _scan_running.is_set():
+        return jsonify({'error': 'No scan is running.'}), 409
+    run_scans.request_stop()
+    return jsonify({'status': 'stopping'})
 
 
 @app.route('/events')
@@ -110,116 +119,154 @@ def _log(msg: str):
 # Scan pipeline (background thread)
 # ---------------------------------------------------------------------------
 
+def _is_stopped() -> bool:
+    return run_scans.is_stop_requested()
+
+
 def _run_pipeline(target: str):
+    # Track all collected file paths so the normalize step can always run.
+    collected: dict = {
+        'subfinder_file': None,
+        'httpx_file': None,
+        'nmap_file': None,
+        'feroxbuster_files': [],
+        'katana_files': [],
+        'wpscan_files': [],
+        'nuclei_file': None,
+    }
+    stopped = False
+
     try:
         run_scans.setup_environment()
 
         # 1 — Subfinder
         _step_start('subfinder', 'Subdomain Enumeration')
-        subfinder_file = run_scans.run_subfinder(target)
-        _step_end('subfinder', 'success' if subfinder_file else 'error')
+        collected['subfinder_file'] = run_scans.run_subfinder(target)
+        _step_end('subfinder', 'success' if collected['subfinder_file'] else 'error')
+        if _is_stopped(): stopped = True; return
 
         # 2 — httpx
         _step_start('httpx', 'HTTP Probing & Tech Detection')
-        httpx_file = run_scans.run_httpx(subfinder_file, target)
-        _step_end('httpx', 'success' if httpx_file else 'error')
+        collected['httpx_file'] = run_scans.run_httpx(collected['subfinder_file'], target)
+        _step_end('httpx', 'success' if collected['httpx_file'] else 'error')
+        if _is_stopped(): stopped = True; return
 
         live_urls, wordpress_urls = [], []
-        if httpx_file:
-            live_urls, wordpress_urls = parsers.extract_live_hosts(httpx_file)
+        if collected['httpx_file']:
+            live_urls, wordpress_urls = parsers.extract_live_hosts(collected['httpx_file'])
             _log(f"Found {len(live_urls)} live host(s), {len(wordpress_urls)} WordPress host(s).")
         else:
             _log("httpx produced no output — downstream steps will be skipped.")
 
         # 3 — Nmap
         _step_start('nmap', 'Port & Service Discovery')
-        nmap_file = run_scans.run_nmap(target)
-        _step_end('nmap', 'success' if nmap_file else 'error')
+        collected['nmap_file'] = run_scans.run_nmap(target)
+        _step_end('nmap', 'success' if collected['nmap_file'] else 'error')
+        if _is_stopped(): stopped = True; return
 
         # 4 — Feroxbuster
-        feroxbuster_files = []
         _step_start('feroxbuster',
                     f'Directory Discovery ({len(live_urls)} host(s))' if live_urls else 'Directory Discovery')
         if live_urls:
             for url in live_urls:
+                if _is_stopped(): stopped = True; return
                 _log(f'Feroxbuster → {url}')
                 f = run_scans.run_feroxbuster(url)
                 if f:
-                    feroxbuster_files.append(f)
-            _step_end('feroxbuster', 'success' if feroxbuster_files else 'error',
-                      f"{len(feroxbuster_files)}/{len(live_urls)} host(s) scanned")
+                    collected['feroxbuster_files'].append(f)
+            _step_end('feroxbuster', 'success' if collected['feroxbuster_files'] else 'error',
+                      f"{len(collected['feroxbuster_files'])}/{len(live_urls)} host(s) scanned")
         else:
             _step_end('feroxbuster', 'skipped', 'No live hosts from httpx')
+        if _is_stopped(): stopped = True; return
 
         # 5 — Katana
-        katana_files = []
         _step_start('katana',
                     f'URL Crawling ({len(live_urls)} host(s))' if live_urls else 'URL Crawling')
         if live_urls:
             for url in live_urls:
+                if _is_stopped(): stopped = True; return
                 _log(f'Katana → {url}')
                 k = run_scans.run_katana(url)
                 if k:
-                    katana_files.append(k)
-            _step_end('katana', 'success' if katana_files else 'error',
-                      f"{len(katana_files)}/{len(live_urls)} host(s) crawled")
+                    collected['katana_files'].append(k)
+            _step_end('katana', 'success' if collected['katana_files'] else 'error',
+                      f"{len(collected['katana_files'])}/{len(live_urls)} host(s) crawled")
         else:
             _step_end('katana', 'skipped', 'No live hosts from httpx')
+        if _is_stopped(): stopped = True; return
 
         # 6 — WPScan
-        wpscan_files = []
         _step_start('wpscan',
                     f'WordPress Scanning ({len(wordpress_urls)} host(s))' if wordpress_urls else 'WordPress Scanning')
         if wordpress_urls:
             for url in wordpress_urls:
+                if _is_stopped(): stopped = True; return
                 _log(f'WPScan → {url}')
                 w = run_scans.run_wpscan(url)
                 if w:
-                    wpscan_files.append(w)
-            _step_end('wpscan', 'success' if wpscan_files else 'error')
+                    collected['wpscan_files'].append(w)
+            _step_end('wpscan', 'success' if collected['wpscan_files'] else 'error')
         else:
             _step_end('wpscan', 'skipped', 'No WordPress hosts detected')
+        if _is_stopped(): stopped = True; return
 
         # 7 — Nuclei
-        nuclei_file = None
         _step_start('nuclei', 'Vulnerability Scanning')
         if live_urls:
-            nuclei_file = run_scans.run_nuclei(live_urls)
-            _step_end('nuclei', 'success' if nuclei_file else 'error')
+            collected['nuclei_file'] = run_scans.run_nuclei(live_urls)
+            _step_end('nuclei', 'success' if collected['nuclei_file'] else 'error')
         else:
             _step_end('nuclei', 'skipped', 'No live hosts to scan')
 
-        # 8 — Normalize
-        _step_start('normalize', 'Normalizing Findings')
-        all_findings = []
-        if subfinder_file:
-            all_findings.extend(parsers.parse_subfinder_jsonl(subfinder_file))
-        if httpx_file:
-            all_findings.extend(parsers.parse_httpx_jsonl(httpx_file))
-        if nmap_file:
-            all_findings.extend(parsers.parse_nmap_json(nmap_file))
-        for f in feroxbuster_files:
-            all_findings.extend(parsers.parse_feroxbuster_json(f))
-        for f in katana_files:
-            all_findings.extend(parsers.parse_katana_jsonl(f))
-        for f in wpscan_files:
-            all_findings.extend(parsers.parse_wpscan_json(f))
-        if nuclei_file:
-            all_findings.extend(parsers.parse_nuclei_jsonl(nuclei_file))
-
-        out_path = os.path.join(run_scans.OUTPUT_DIR, 'normalized_findings.json')
-        with open(out_path, 'w', encoding='utf-8') as fh:
-            json.dump([asdict(x) for x in all_findings], fh, indent=4)
-        _state['output_file'] = out_path
-
-        _step_end('normalize', 'success', f"{len(all_findings)} total findings")
-        _emit({'type': 'scan_complete', 'total_findings': len(all_findings)})
-
     except Exception as e:
-        _emit({'type': 'scan_error', 'message': str(e)})
+        _log(f'Pipeline error: {e}')
+        stopped = True
 
     finally:
+        # Always normalize and write whatever was collected, even if stopped early.
+        _normalize_and_finish(collected, stopped)
         _scan_running.clear()
+
+
+def _normalize_and_finish(collected: dict, stopped: bool):
+    _step_start('normalize', 'Normalizing Findings')
+    all_findings = []
+    try:
+        if collected['subfinder_file']:
+            all_findings.extend(parsers.parse_subfinder_jsonl(collected['subfinder_file']))
+        if collected['httpx_file']:
+            all_findings.extend(parsers.parse_httpx_jsonl(collected['httpx_file']))
+        if collected['nmap_file']:
+            all_findings.extend(parsers.parse_nmap_json(collected['nmap_file']))
+        for f in collected['feroxbuster_files']:
+            all_findings.extend(parsers.parse_feroxbuster_json(f))
+        for f in collected['katana_files']:
+            all_findings.extend(parsers.parse_katana_jsonl(f))
+        for f in collected['wpscan_files']:
+            all_findings.extend(parsers.parse_wpscan_json(f))
+        if collected['nuclei_file']:
+            all_findings.extend(parsers.parse_nuclei_jsonl(collected['nuclei_file']))
+
+        if all_findings:
+            out_path = os.path.join(run_scans.OUTPUT_DIR, 'normalized_findings.json')
+            with open(out_path, 'w', encoding='utf-8') as fh:
+                json.dump([asdict(x) for x in all_findings], fh, indent=4)
+            _state['output_file'] = out_path
+
+        partial_note = ' (partial — scan stopped early)' if stopped else ''
+        _step_end('normalize', 'success', f"{len(all_findings)} total findings{partial_note}")
+
+        if stopped:
+            _emit({'type': 'scan_error',
+                   'message': f'Scan stopped early. {len(all_findings)} findings saved.',
+                   'findings': len(all_findings)})
+        else:
+            _emit({'type': 'scan_complete', 'total_findings': len(all_findings)})
+
+    except Exception as e:
+        _step_end('normalize', 'error', str(e))
+        _emit({'type': 'scan_error', 'message': f'Normalize failed: {e}'})
 
 
 if __name__ == '__main__':
