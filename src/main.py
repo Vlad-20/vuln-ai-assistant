@@ -5,7 +5,7 @@ from dataclasses import asdict
 import os
 
 TEST_TARGET = "vladvlaicu.com"
-OUTPUT_FILE = os.path.join(run_scans.OUTPUT_DIR, 'normalized_findings.json')
+OUTPUT_FILE = os.path.join(run_scans.OUTPUT_DIR, 'normalized_findings.jsonl')
 
 
 def main():
@@ -105,11 +105,12 @@ def main():
     print(f"\n*** Total normalized findings: {len(all_findings)} ***")
 
     try:
-        with open(OUTPUT_FILE, 'w') as f:
-            json.dump([asdict(finding) for finding in all_findings], f, indent=4)
-        print(f"\nSuccessfully saved all findings to: {OUTPUT_FILE}")
+        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+            for finding in all_findings:
+                f.write(json.dumps(asdict(finding)) + '\n')
+        print(f"\nSuccessfully saved {len(all_findings)} entries to: {OUTPUT_FILE}")
     except Exception as e:
-        print(f"\nERROR saving findings to JSON: {e}")
+        print(f"\nERROR saving findings to JSONL: {e}")
 
 
 if __name__ == "__main__":

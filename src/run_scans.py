@@ -314,33 +314,85 @@ def run_katana(url: str):
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
     safe_name = _sanitize_filename(url)
-    out_container = f'/output/katana_{safe_name}.jsonl'
     out_local = os.path.join(OUTPUT_DIR, f'katana_{safe_name}.jsonl')
 
     # -T disables TTY so pipes work cleanly.
     # -d 2 caps crawl depth so katana finishes before the timeout kills it.
-    # -jsonl + -o writes JSON lines directly to the file via the mounted volume.
+    # No -o flag: we stream stdout to the host file directly so partial results
+    # are preserved even when the container is killed at timeout.
     command = [
-        'docker-compose', 'run', '--rm', '-T', 'katana',
+        'docker', 'run', '--rm', '--network', 'host',
+        'projectdiscovery/katana:latest',
         '-u', url,
         '-jsonl',
-        '-o', out_container,
         '-d', '2',
-        '-silent',
     ]
+    print(f"[KATANA] Command: {' '.join(command)}")
+
+    global _current_proc
+    timed_out = False
+    stdout_lines = []
+    stderr_lines = []
+
+    proc = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+    )
+    with _proc_lock:
+        _current_proc = proc
+
+    def _kill_on_timeout():
+        nonlocal timed_out
+        timed_out = True
+        print(f"[KATANA] Timeout ({KATANA_TIMEOUT}s) reached for {url}. Stopping container...")
+        proc.kill()
+        _stop_service_containers('katana')
+
+    # Drain stderr in a background thread to prevent pipe buffer deadlock.
+    # Some katana versions also write JSONL to stderr rather than stdout.
+    def _drain_stderr():
+        for line in proc.stderr:
+            stderr_lines.append(line.rstrip('\n'))
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    timer = threading.Timer(KATANA_TIMEOUT, _kill_on_timeout)
+    timer.start()
     try:
-        _run(command, KATANA_TIMEOUT, 'katana')
-        print(f"[KATANA] Complete for {url}. Results: {out_local}")
-        return out_local if _is_nonempty(out_local) else None
-    except subprocess.TimeoutExpired:
-        print(f"[KATANA] Timed out after {KATANA_TIMEOUT}s for {url}. Using partial results if available.")
-        return out_local if _is_nonempty(out_local) else None
-    except subprocess.CalledProcessError as e:
-        if _is_nonempty(out_local):
-            print(f"[KATANA] Finished with non-zero exit for {url}. Results: {out_local}")
-            return out_local
-        print(f"[KATANA] ERROR for {url}: {e.stderr}")
-        return None
+        for line in proc.stdout:
+            stdout_lines.append(line.rstrip('\n'))
+        proc.stdout.close()
+        proc.wait()
+        stderr_thread.join(timeout=5)
+        proc.stderr.close()
+    finally:
+        timer.cancel()
+        with _proc_lock:
+            _current_proc = None
+
+    print(f"[KATANA] stdout lines: {len(stdout_lines)}, stderr lines: {len(stderr_lines)}")
+    for l in stderr_lines[:10]:
+        print(f"[KATANA] stderr: {l}")
+
+    # Some katana builds write JSONL to stderr instead of stdout when piped.
+    # Use whichever stream has content; prefer stdout.
+    result_lines = stdout_lines if stdout_lines else stderr_lines
+
+    with open(out_local, 'w', encoding='utf-8') as f:
+        for line in result_lines:
+            f.write(line + '\n')
+
+    if timed_out:
+        print(f"[KATANA] Timed out after {KATANA_TIMEOUT}s for {url}. Partial results: {len(result_lines)} lines.")
+    else:
+        print(f"[KATANA] Complete for {url}. Exit code: {proc.returncode}. Results: {len(result_lines)} lines.")
+
+    return out_local if _is_nonempty(out_local) else None
 
 
 # ---------------------------------------------------------------------------

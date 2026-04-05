@@ -1,18 +1,76 @@
 import json
-from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any, Tuple
+from dataclasses import dataclass
+from typing import List, Dict, Any, Tuple
+
+# ---------------------------------------------------------------------------
+# Dataclasses
+# ---------------------------------------------------------------------------
 
 @dataclass
-class NormalizedFinding:
-    # standardized, unified format for any vuln
+class SubfinderResult:
+    tool: str  # "subfinder"
+    subdomain: str
+    parent_domain: str
+    sources: List[str]
+
+@dataclass
+class HttpxResult:
+    tool: str  # "httpx"
+    url: str
+    status_code: int
+    title: str
+    technologies: List[str]
+    webserver: str
+    ip: str
+    cdn: str
+
+@dataclass
+class NmapResult:
+    tool: str  # "nmap"
     host: str
-    port: Optional[int]
-    protocol: Optional[str]
+    port: int
+    protocol: str
+    service: str
+    product: str
+    version: str
+
+@dataclass
+class FeroxbusterResult:
+    tool: str  # "feroxbuster"
+    url: str
+    status: int
+    content_length: int
+
+@dataclass
+class KatanaResult:
+    tool: str  # "katana"
+    url: str
+    method: str
+    source: str
+
+@dataclass
+class NucleiFinding:
+    tool: str  # "nuclei"
+    host: str
     finding_name: str
     severity: str
-    source_tool: str
     description: str
-    raw_evidence: Dict[str, Any] = field(default_factory=dict)
+    template_id: str
+    matcher_name: str
+    matched_at: str
+    extracted_results: List[str]
+    curl_command: str
+    references: List[str]
+
+@dataclass
+class WpscanFinding:
+    tool: str  # "wpscan"
+    host: str
+    finding_name: str
+    severity: str
+    description: str
+    finding_type: str  # "vulnerability", "user_enumerated", "interesting_finding"
+    references: Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -53,14 +111,99 @@ def extract_live_hosts(httpx_jsonl: str) -> Tuple[List[str], List[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Deduplication / filtering
+# ---------------------------------------------------------------------------
+
+def dedup_subfinder(results: List[SubfinderResult]) -> List[SubfinderResult]:
+    seen = set()
+    out = []
+    for r in results:
+        if r.subdomain not in seen:
+            seen.add(r.subdomain)
+            out.append(r)
+    return out
+
+def dedup_httpx(results: List[HttpxResult]) -> List[HttpxResult]:
+    seen = set()
+    out = []
+    for r in results:
+        if r.url not in seen:
+            seen.add(r.url)
+            out.append(r)
+    return out
+
+def dedup_nmap(results: List[NmapResult]) -> List[NmapResult]:
+    seen = set()
+    out = []
+    for r in results:
+        key = (r.host, r.port, r.protocol)
+        if key not in seen:
+            seen.add(key)
+            out.append(r)
+    return out
+
+_FEROX_DROP_STATUSES = {404, 403, 400}
+_FEROX_MIN_CONTENT_LENGTH = 100
+
+def dedup_feroxbuster(results: List[FeroxbusterResult]) -> List[FeroxbusterResult]:
+    seen = set()
+    out = []
+    for r in results:
+        if r.status in _FEROX_DROP_STATUSES:
+            continue
+        if r.content_length < _FEROX_MIN_CONTENT_LENGTH:
+            continue
+        if r.url not in seen:
+            seen.add(r.url)
+            out.append(r)
+    return out
+
+_KATANA_DROP_EXTENSIONS = {
+    '.css', '.js', '.png', '.jpg', '.jpeg', '.gif', '.svg',
+    '.woff', '.woff2', '.ttf', '.eot', '.ico', '.map',
+}
+
+def dedup_katana(results: List[KatanaResult]) -> List[KatanaResult]:
+    seen = set()
+    out = []
+    for r in results:
+        # Strip query string for extension check
+        path = r.url.split('?')[0].lower()
+        if any(path.endswith(ext) for ext in _KATANA_DROP_EXTENSIONS):
+            continue
+        if r.url not in seen:
+            seen.add(r.url)
+            out.append(r)
+    return out
+
+def dedup_nuclei(results: List[NucleiFinding]) -> List[NucleiFinding]:
+    seen = set()
+    out = []
+    for r in results:
+        key = (r.host, r.template_id)
+        if key not in seen:
+            seen.add(key)
+            out.append(r)
+    return out
+
+def dedup_wpscan(results: List[WpscanFinding]) -> List[WpscanFinding]:
+    seen = set()
+    out = []
+    for r in results:
+        key = (r.host, r.finding_name)
+        if key not in seen:
+            seen.add(key)
+            out.append(r)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Step 1 — Subfinder
 # ---------------------------------------------------------------------------
 
-def parse_subfinder_jsonl(jsonl_file: str) -> List[NormalizedFinding]:
-    # parses a Subfinder JSON-Lines output file into a list of NormalizedFinding
-    # each line: {"host": "sub.example.com", "source": [...], "input": "example.com"}
+def parse_subfinder_jsonl(jsonl_file: str) -> List[SubfinderResult]:
     print(f"Parsing Subfinder file: {jsonl_file}...")
-    findings = []
+    results = []
     try:
         with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
@@ -69,27 +212,21 @@ def parse_subfinder_jsonl(jsonl_file: str) -> List[NormalizedFinding]:
                     continue
                 try:
                     data = json.loads(line)
-                    host = data.get('host', 'unknown')
-                    source = data.get('source', '')
-                    sources_str = ', '.join(source) if isinstance(source, list) else source
-                    input_domain = data.get('input', 'unknown')
-
-                    finding = NormalizedFinding(
-                        host=host,
-                        port=None,
-                        protocol=None,
-                        finding_name=f"Subdomain Discovered: {host}",
-                        severity="info",
-                        source_tool="subfinder",
-                        description=f"Subdomain '{host}' discovered for '{input_domain}' via sources: {sources_str}",
-                        raw_evidence=data
-                    )
-                    findings.append(finding)
+                    sources = data.get('source', [])
+                    if isinstance(sources, str):
+                        sources = [sources]
+                    results.append(SubfinderResult(
+                        tool="subfinder",
+                        subdomain=data.get('host', 'unknown'),
+                        parent_domain=data.get('input', 'unknown'),
+                        sources=sources,
+                    ))
                 except json.JSONDecodeError:
                     print(f"Skipping invalid JSON line: {line}")
 
-        print(f"Found {len(findings)} Subfinder findings.")
-        return findings
+        results = dedup_subfinder(results)
+        print(f"Found {len(results)} Subfinder results (after dedup).")
+        return results
     except FileNotFoundError:
         print(f"Subfinder output file not found: {jsonl_file}")
         return []
@@ -99,10 +236,9 @@ def parse_subfinder_jsonl(jsonl_file: str) -> List[NormalizedFinding]:
 # Step 2 — httpx
 # ---------------------------------------------------------------------------
 
-def parse_httpx_jsonl(jsonl_file: str) -> List[NormalizedFinding]:
-    # each line: {"url": "...", "status_code": 200, "title": "...", "tech": [...], ...}
+def parse_httpx_jsonl(jsonl_file: str) -> List[HttpxResult]:
     print(f"Parsing httpx file: {jsonl_file}...")
-    findings = []
+    results = []
     try:
         with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
@@ -112,38 +248,23 @@ def parse_httpx_jsonl(jsonl_file: str) -> List[NormalizedFinding]:
                 try:
                     data = json.loads(line)
                     url = data.get('url') or data.get('input', 'unknown')
-                    status = data.get('status_code', 0)
-                    title = data.get('title', '')
                     tech = data.get('tech') or data.get('technologies') or []
-                    server = data.get('webserver') or data.get('server', '')
-                    cdn = data.get('cdn', '')
-                    ip = data.get('ip', '')
-
-                    tech_str = ', '.join(tech) if tech else 'N/A'
-                    desc = (
-                        f"Live host {url} responded with HTTP {status}. "
-                        f"Title: '{title}'. Tech: {tech_str}. Server: {server}."
-                    )
-                    if cdn:
-                        desc += f" CDN: {cdn}."
-                    if ip:
-                        desc += f" IP: {ip}."
-
-                    findings.append(NormalizedFinding(
-                        host=url,
-                        port=None,
-                        protocol=data.get('scheme'),
-                        finding_name=f"Live Host: {url}",
-                        severity="info",
-                        source_tool="httpx",
-                        description=desc,
-                        raw_evidence=data
+                    results.append(HttpxResult(
+                        tool="httpx",
+                        url=url,
+                        status_code=data.get('status_code', 0),
+                        title=data.get('title', ''),
+                        technologies=tech if isinstance(tech, list) else [tech],
+                        webserver=data.get('webserver') or data.get('server', ''),
+                        ip=data.get('ip', ''),
+                        cdn=data.get('cdn', ''),
                     ))
                 except json.JSONDecodeError:
                     print(f"Skipping invalid JSON line: {line}")
 
-        print(f"Found {len(findings)} httpx findings.")
-        return findings
+        results = dedup_httpx(results)
+        print(f"Found {len(results)} httpx results (after dedup).")
+        return results
     except FileNotFoundError:
         print(f"httpx output file not found: {jsonl_file}")
         return []
@@ -153,11 +274,9 @@ def parse_httpx_jsonl(jsonl_file: str) -> List[NormalizedFinding]:
 # Step 3 — Nmap
 # ---------------------------------------------------------------------------
 
-def parse_nmap_json(json_file: str) -> List[NormalizedFinding]:
-    # Parses the JSON file produced by run_scans._nmap_xml_to_json().
-    # Structure: {"hosts": [{"address": "...", "ports": [{"portid": 80, "protocol": "tcp", "state": "open", "service": {...}}]}]}
+def parse_nmap_json(json_file: str) -> List[NmapResult]:
     print(f"Parsing Nmap file: {json_file}...")
-    findings = []
+    results = []
     try:
         with open(json_file, 'r', encoding='utf-8', errors='replace') as f:
             data = json.load(f)
@@ -167,32 +286,20 @@ def parse_nmap_json(json_file: str) -> List[NormalizedFinding]:
             for port in host.get('ports', []):
                 if port.get('state') != 'open':
                     continue
-                port_num = port.get('portid')
-                port_proto = port.get('protocol')
                 service = port.get('service', {})
-                service_name = service.get('name', 'unknown')
-                product = service.get('product', '')
-                version = service.get('version', '')
-
-                findings.append(NormalizedFinding(
+                results.append(NmapResult(
+                    tool="nmap",
                     host=host_address,
-                    port=port_num,
-                    protocol=port_proto,
-                    finding_name=f"Open Port: {service_name}",
-                    severity="info",
-                    source_tool="nmap",
-                    description=f"Service {service_name} detected on port {port_num}/{port_proto}. Product: {product}, Version: {version}",
-                    raw_evidence={
-                        'port': port_num,
-                        'protocol': port_proto,
-                        'service': service_name,
-                        'product': product,
-                        'version': version
-                    }
+                    port=port.get('portid'),
+                    protocol=port.get('protocol', ''),
+                    service=service.get('name', 'unknown'),
+                    product=service.get('product', ''),
+                    version=service.get('version', ''),
                 ))
 
-        print(f"Found {len(findings)} Nmap findings.")
-        return findings
+        results = dedup_nmap(results)
+        print(f"Found {len(results)} Nmap results (after dedup).")
+        return results
 
     except (json.JSONDecodeError, KeyError) as e:
         print(f"Error parsing Nmap JSON: {e}")
@@ -206,11 +313,9 @@ def parse_nmap_json(json_file: str) -> List[NormalizedFinding]:
 # Step 4 — Feroxbuster
 # ---------------------------------------------------------------------------
 
-def parse_feroxbuster_json(json_file: str) -> List[NormalizedFinding]:
-    # Feroxbuster --json outputs one JSON object per line (JSONL-style).
-    # Relevant entries have "type": "response".
+def parse_feroxbuster_json(json_file: str) -> List[FeroxbusterResult]:
     print(f"Parsing Feroxbuster file: {json_file}...")
-    findings = []
+    results = []
     try:
         with open(json_file, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
@@ -221,27 +326,18 @@ def parse_feroxbuster_json(json_file: str) -> List[NormalizedFinding]:
                     data = json.loads(line)
                     if data.get('type') != 'response':
                         continue
-
-                    url = data.get('url', 'unknown')
-                    status = data.get('status', 0)
-                    content_length = data.get('content_length', 0)
-                    method = data.get('method', 'GET')
-
-                    findings.append(NormalizedFinding(
-                        host=url,
-                        port=None,
-                        protocol=None,
-                        finding_name=f"Directory/File Found: {url}",
-                        severity="info",
-                        source_tool="feroxbuster",
-                        description=f"{method} {url} → HTTP {status}, {content_length} bytes",
-                        raw_evidence=data
+                    results.append(FeroxbusterResult(
+                        tool="feroxbuster",
+                        url=data.get('url', 'unknown'),
+                        status=data.get('status', 0),
+                        content_length=data.get('content_length', 0),
                     ))
                 except json.JSONDecodeError:
                     print(f"Skipping invalid JSON line: {line}")
 
-        print(f"Found {len(findings)} Feroxbuster findings.")
-        return findings
+        results = dedup_feroxbuster(results)
+        print(f"Found {len(results)} Feroxbuster results (after dedup + filter).")
+        return results
     except FileNotFoundError:
         print(f"Feroxbuster output file not found: {json_file}")
         return []
@@ -251,10 +347,9 @@ def parse_feroxbuster_json(json_file: str) -> List[NormalizedFinding]:
 # Step 5 — Katana
 # ---------------------------------------------------------------------------
 
-def parse_katana_jsonl(jsonl_file: str) -> List[NormalizedFinding]:
-    # each line: {"timestamp": "...", "request": {"endpoint": "...", "method": "..."}, ...}
+def parse_katana_jsonl(jsonl_file: str) -> List[KatanaResult]:
     print(f"Parsing Katana file: {jsonl_file}...")
-    findings = []
+    results = []
     try:
         with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
@@ -265,24 +360,18 @@ def parse_katana_jsonl(jsonl_file: str) -> List[NormalizedFinding]:
                     data = json.loads(line)
                     request = data.get('request', {})
                     endpoint = request.get('endpoint') or data.get('endpoint', 'unknown')
-                    method = request.get('method', 'GET')
-                    source = data.get('source', '')
-
-                    findings.append(NormalizedFinding(
-                        host=endpoint,
-                        port=None,
-                        protocol=None,
-                        finding_name=f"Crawled Endpoint: {endpoint}",
-                        severity="info",
-                        source_tool="katana",
-                        description=f"Endpoint {endpoint} discovered via {method} crawl. Source: {source}",
-                        raw_evidence=data
+                    results.append(KatanaResult(
+                        tool="katana",
+                        url=endpoint,
+                        method=request.get('method', 'GET'),
+                        source=data.get('source', ''),
                     ))
                 except json.JSONDecodeError:
                     print(f"Skipping invalid JSON line: {line}")
 
-        print(f"Found {len(findings)} Katana findings.")
-        return findings
+        results = dedup_katana(results)
+        print(f"Found {len(results)} Katana results (after dedup + filter).")
+        return results
     except FileNotFoundError:
         print(f"Katana output file not found: {jsonl_file}")
         return []
@@ -292,105 +381,90 @@ def parse_katana_jsonl(jsonl_file: str) -> List[NormalizedFinding]:
 # Step 6 — WPScan
 # ---------------------------------------------------------------------------
 
-def parse_wpscan_json(json_file: str) -> List[NormalizedFinding]:
-    # WPScan outputs a single JSON object with keys like:
-    # interesting_findings, plugins, themes, users, version, vulnerabilities
+def _cvss_to_severity(raw) -> str:
+    try:
+        score = float(raw)
+        if score >= 9.0:
+            return 'critical'
+        elif score >= 7.0:
+            return 'high'
+        elif score >= 4.0:
+            return 'medium'
+        else:
+            return 'low'
+    except (ValueError, TypeError):
+        return str(raw).lower() if raw else 'medium'
+
+def parse_wpscan_json(json_file: str) -> List[WpscanFinding]:
     print(f"Parsing WPScan file: {json_file}...")
-    findings = []
+    results = []
     try:
         with open(json_file, 'r', encoding='utf-8', errors='replace') as f:
             data = json.load(f)
 
         target_url = data.get('target_url', 'unknown')
 
-        # Interesting findings (headers, exposed files, etc.)
         for item in data.get('interesting_findings', []):
-            url = item.get('url', target_url)
-            finding_type = item.get('type', 'interesting_finding')
-            references = item.get('references', {})
-            findings.append(NormalizedFinding(
+            results.append(WpscanFinding(
+                tool="wpscan",
                 host=target_url,
-                port=None,
-                protocol=None,
-                finding_name=f"WPScan: {finding_type}",
-                severity="info",
-                source_tool="wpscan",
-                description=item.get('to_s', f"{finding_type} at {url}"),
-                raw_evidence={'item': item, 'references': references}
+                finding_name=item.get('type', 'interesting_finding'),
+                severity='info',
+                description=item.get('to_s', ''),
+                finding_type='interesting_finding',
+                references=item.get('references', {}),
             ))
 
-        # WordPress version vulnerabilities
         wp_version = data.get('version') or {}
         for vuln in wp_version.get('vulnerabilities', []):
-            severity = vuln.get('cvss', {}).get('score', 'medium')
-            # Normalize numeric CVSS score to a label
-            try:
-                score = float(severity)
-                if score >= 9.0:
-                    severity = 'critical'
-                elif score >= 7.0:
-                    severity = 'high'
-                elif score >= 4.0:
-                    severity = 'medium'
-                else:
-                    severity = 'low'
-            except (ValueError, TypeError):
-                severity = str(severity).lower() if severity else 'medium'
-
-            findings.append(NormalizedFinding(
+            results.append(WpscanFinding(
+                tool="wpscan",
                 host=target_url,
-                port=None,
-                protocol=None,
-                finding_name=f"WordPress Vulnerability: {vuln.get('title', 'N/A')}",
-                severity=severity,
-                source_tool="wpscan",
-                description=vuln.get('title', 'No description.'),
-                raw_evidence=vuln
+                finding_name=vuln.get('title', 'WordPress Vulnerability'),
+                severity=_cvss_to_severity(vuln.get('cvss', {}).get('score')),
+                description=vuln.get('title', ''),
+                finding_type='vulnerability',
+                references=vuln.get('references', {}),
             ))
 
-        # Plugin vulnerabilities
         for plugin_name, plugin_data in data.get('plugins', {}).items():
             for vuln in plugin_data.get('vulnerabilities', []):
-                findings.append(NormalizedFinding(
+                results.append(WpscanFinding(
+                    tool="wpscan",
                     host=target_url,
-                    port=None,
-                    protocol=None,
-                    finding_name=f"WP Plugin Vulnerability: {vuln.get('title', plugin_name)}",
-                    severity='medium',
-                    source_tool="wpscan",
-                    description=f"Plugin '{plugin_name}': {vuln.get('title', 'N/A')}",
-                    raw_evidence=vuln
+                    finding_name=vuln.get('title', plugin_name),
+                    severity=_cvss_to_severity(vuln.get('cvss', {}).get('score')),
+                    description=f"Plugin '{plugin_name}': {vuln.get('title', '')}",
+                    finding_type='vulnerability',
+                    references=vuln.get('references', {}),
                 ))
 
-        # Theme vulnerabilities
         for theme_name, theme_data in data.get('themes', {}).items():
             for vuln in theme_data.get('vulnerabilities', []):
-                findings.append(NormalizedFinding(
+                results.append(WpscanFinding(
+                    tool="wpscan",
                     host=target_url,
-                    port=None,
-                    protocol=None,
-                    finding_name=f"WP Theme Vulnerability: {vuln.get('title', theme_name)}",
-                    severity='medium',
-                    source_tool="wpscan",
-                    description=f"Theme '{theme_name}': {vuln.get('title', 'N/A')}",
-                    raw_evidence=vuln
+                    finding_name=vuln.get('title', theme_name),
+                    severity=_cvss_to_severity(vuln.get('cvss', {}).get('score')),
+                    description=f"Theme '{theme_name}': {vuln.get('title', '')}",
+                    finding_type='vulnerability',
+                    references=vuln.get('references', {}),
                 ))
 
-        # Enumerated users
-        for username, user_data in data.get('users', {}).items():
-            findings.append(NormalizedFinding(
+        for username in data.get('users', {}):
+            results.append(WpscanFinding(
+                tool="wpscan",
                 host=target_url,
-                port=None,
-                protocol=None,
-                finding_name=f"WordPress User Enumerated: {username}",
+                finding_name=f"User: {username}",
                 severity='low',
-                source_tool="wpscan",
-                description=f"WordPress user '{username}' was enumerated at {target_url}.",
-                raw_evidence=user_data
+                description=f"WordPress user '{username}' enumerated at {target_url}.",
+                finding_type='user_enumerated',
+                references={},
             ))
 
-        print(f"Found {len(findings)} WPScan findings.")
-        return findings
+        results = dedup_wpscan(results)
+        print(f"Found {len(results)} WPScan findings (after dedup).")
+        return results
     except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
         print(f"Error parsing WPScan file {json_file}: {e}")
         return []
@@ -400,32 +474,41 @@ def parse_wpscan_json(json_file: str) -> List[NormalizedFinding]:
 # Step 7 — Nuclei
 # ---------------------------------------------------------------------------
 
-def parse_nuclei_jsonl(jsonl_file: str) -> List[NormalizedFinding]:
-    # parses a Nuclei JSON-Lines output file into a list of NormalizedFinding
+def parse_nuclei_jsonl(jsonl_file: str) -> List[NucleiFinding]:
     print(f"Parsing Nuclei file: {jsonl_file}...")
-    findings = []
+    results = []
     try:
         with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
+                line = line.strip()
+                if not line:
+                    continue
                 try:
                     data = json.loads(line)
-
-                    finding = NormalizedFinding(
+                    info = data.get('info', {})
+                    refs = info.get('reference') or info.get('references') or []
+                    if isinstance(refs, str):
+                        refs = [refs]
+                    extracted = data.get('extracted-results') or data.get('extracted_results') or []
+                    results.append(NucleiFinding(
+                        tool="nuclei",
                         host=data.get('host', 'unknown'),
-                        port=None,
-                        protocol=data.get('scheme'),
-                        finding_name=data.get('info', {}).get('name', 'N/A'),
-                        severity=data.get('info', {}).get('severity', 'info'),
-                        source_tool="nuclei",
-                        description=data.get('info', {}).get('description', 'No description provided.'),
-                        raw_evidence=data
-                    )
-                    findings.append(finding)
+                        finding_name=info.get('name', 'N/A'),
+                        severity=info.get('severity', 'info'),
+                        description=info.get('description', ''),
+                        template_id=data.get('template-id') or data.get('template_id', ''),
+                        matcher_name=data.get('matcher-name') or data.get('matcher_name', ''),
+                        matched_at=data.get('matched-at') or data.get('matched_at', ''),
+                        extracted_results=extracted,
+                        curl_command=data.get('curl-command') or data.get('curl_command', ''),
+                        references=refs,
+                    ))
                 except json.JSONDecodeError:
                     print(f"Skipping invalid JSON line: {line}")
 
-        print(f"Found {len(findings)} Nuclei findings.")
-        return findings
+        results = dedup_nuclei(results)
+        print(f"Found {len(results)} Nuclei findings (after dedup).")
+        return results
     except FileNotFoundError:
         print(f"Nuclei output file not found: {jsonl_file}")
         return []

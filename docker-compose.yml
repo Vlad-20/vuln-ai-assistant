@@ -30,6 +30,7 @@ services:
   katana:
     image: projectdiscovery/katana:latest
     entrypoint: katana
+    network_mode: host
     volumes:
       - ./output:/output
 
