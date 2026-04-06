@@ -44,7 +44,7 @@
       gap: 1rem;
     }
 
-    /* ── Header ── */
+    /* Header */
     header {
       text-align: center;
       padding: 0.5rem 0 1rem;
@@ -64,7 +64,7 @@
       margin-top: 0.3rem;
     }
 
-    /* ── Card ── */
+    /* Card */
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -83,7 +83,7 @@
       justify-content: space-between;
     }
 
-    /* ── Input card ── */
+    /* Input card */
     .input-row {
       display: flex;
       gap: 0.6rem;
@@ -125,7 +125,7 @@
       color: var(--text);
     }
 
-    /* ── Steps ── */
+    /* Steps */
     .steps { display: flex; flex-direction: column; gap: 0.45rem; }
 
     .step {
@@ -213,7 +213,7 @@
       text-align: right;
     }
 
-    /* ── Log ── */
+    /* Log */
     .log-box {
       background: #010409;
       border: 1px solid var(--border);
@@ -233,7 +233,7 @@
     .log-box .le-ok      { color: var(--green); }
     .log-box .le-err     { color: var(--red); }
 
-    /* ── Results ── */
+    /* Results */
     #results-card { display: none; }
 
     .stat-row {
@@ -317,7 +317,7 @@
 </div>
 
 <script>
-  // ── Step definitions ──────────────────────────────────────────────────────
+  // Step definitions
   const STEPS = [
     { id: 'subfinder',   label: 'Subdomain Enumeration',        tool: 'subfinder'   },
     { id: 'httpx',       label: 'HTTP Probing & Tech Detection', tool: 'httpx'       },
@@ -331,13 +331,13 @@
 
   const STATUS_ICON = { success: '✓', error: '✗', skipped: '—' };
 
-  // ── State ─────────────────────────────────────────────────────────────────
-  let stepTimers   = {};   // id → {iv, t0}
+  // State
+  let stepTimers   = {};   // id -> {iv, t0}
   let globalTimerIv = null;
   let globalStart   = null;
   let es            = null;
 
-  // ── Build step cards ──────────────────────────────────────────────────────
+  // Build step cards
   function buildSteps() {
     const list = document.getElementById('steps');
     list.innerHTML = STEPS.map((s, i) => `
@@ -354,7 +354,7 @@
       </div>`).join('');
   }
 
-  // ── Reset all to pending ──────────────────────────────────────────────────
+  // Reset all to pending
   function resetSteps() {
     Object.values(stepTimers).forEach(t => clearInterval(t.iv));
     stepTimers = {};
@@ -378,7 +378,7 @@
     document.getElementById('global-timer').textContent = '';
   }
 
-  // ── Timer helpers ─────────────────────────────────────────────────────────
+  // Timer helpers
   function fmtTime(ms) {
     const s = Math.floor(ms / 1000);
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
@@ -397,7 +397,7 @@
     globalTimerIv = null;
   }
 
-  // ── Step state updates ────────────────────────────────────────────────────
+  // Step state updates
   function setRunning(id, label) {
     const el   = document.getElementById(`step-${id}`);
     const ind  = document.getElementById(`ind-${id}`);
@@ -441,7 +441,7 @@
     if (msg) sub.textContent = msg;
   }
 
-  // ── Log helpers ───────────────────────────────────────────────────────────
+  // Log helpers
   function log(msg, cls = 'le-info') {
     const box = document.getElementById('log');
     const p   = document.createElement('div');
@@ -451,7 +451,7 @@
     box.scrollTop = box.scrollHeight;
   }
 
-  // ── SSE event handler ─────────────────────────────────────────────────────
+  // SSE event handler
   function handleEvent(ev) {
     switch (ev.type) {
       case 'step_start':
@@ -485,7 +485,7 @@
     }
   }
 
-  // ── SSE connection ────────────────────────────────────────────────────────
+  // SSE connection
   function connectSSE() {
     if (es) es.close();
     es = new EventSource('/events');
@@ -494,7 +494,7 @@
     };
   }
 
-  // ── Scan complete ─────────────────────────────────────────────────────────
+  // Scan complete
   function onComplete(total) {
     stopGlobalTimer();
     log('✓  Scan complete!', 'le-ok');
@@ -506,7 +506,7 @@
     if (es) { es.close(); es = null; }
   }
 
-  // ── Button helpers ────────────────────────────────────────────────────────
+  // Button helpers
   function resetBtn() {
     const scanBtn = document.getElementById('scan-btn');
     const stopBtn = document.getElementById('stop-btn');
@@ -524,7 +524,7 @@
     stopBtn.disabled = false;
   }
 
-  // ── Public actions ────────────────────────────────────────────────────────
+  // Public actions
   function stopScan() {
     const stopBtn = document.getElementById('stop-btn');
     stopBtn.disabled = true;
@@ -569,7 +569,7 @@
     window.location.href = '/download';
   }
 
-  // ── Init ──────────────────────────────────────────────────────────────────
+  // Init
   document.addEventListener('DOMContentLoaded', () => {
     buildSteps();
     document.getElementById('target').addEventListener('keydown', e => {

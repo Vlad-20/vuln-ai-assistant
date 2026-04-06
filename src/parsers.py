@@ -2,9 +2,7 @@ import json
 from dataclasses import dataclass
 from typing import List, Dict, Any, Tuple
 
-# ---------------------------------------------------------------------------
 # Dataclasses
-# ---------------------------------------------------------------------------
 
 @dataclass
 class SubfinderResult:
@@ -73,9 +71,7 @@ class WpscanFinding:
     references: Dict[str, Any]
 
 
-# ---------------------------------------------------------------------------
 # Utility
-# ---------------------------------------------------------------------------
 
 def extract_live_hosts(httpx_jsonl: str) -> Tuple[List[str], List[str]]:
     """
@@ -98,7 +94,7 @@ def extract_live_hosts(httpx_jsonl: str) -> Tuple[List[str], List[str]]:
                         continue
                     live_urls.append(url)
 
-                    # tech field can be a list of strings (e.g. ["WordPress 6.4", "PHP"])
+                    # tech field can be a list of strings (["WordPress 6.4", "PHP"])
                     tech = data.get('tech') or data.get('technologies') or []
                     if any('wordpress' in t.lower() for t in tech):
                         wordpress_urls.append(url)
@@ -110,9 +106,7 @@ def extract_live_hosts(httpx_jsonl: str) -> Tuple[List[str], List[str]]:
     return live_urls, wordpress_urls
 
 
-# ---------------------------------------------------------------------------
 # Deduplication / filtering
-# ---------------------------------------------------------------------------
 
 def dedup_subfinder(results: List[SubfinderResult]) -> List[SubfinderResult]:
     seen = set()
@@ -197,9 +191,7 @@ def dedup_wpscan(results: List[WpscanFinding]) -> List[WpscanFinding]:
     return out
 
 
-# ---------------------------------------------------------------------------
-# Step 1 — Subfinder
-# ---------------------------------------------------------------------------
+# 1. Subfinder
 
 def parse_subfinder_jsonl(jsonl_file: str) -> List[SubfinderResult]:
     print(f"Parsing Subfinder file: {jsonl_file}...")
@@ -232,9 +224,7 @@ def parse_subfinder_jsonl(jsonl_file: str) -> List[SubfinderResult]:
         return []
 
 
-# ---------------------------------------------------------------------------
-# Step 2 — httpx
-# ---------------------------------------------------------------------------
+# 2. httpx
 
 def parse_httpx_jsonl(jsonl_file: str) -> List[HttpxResult]:
     print(f"Parsing httpx file: {jsonl_file}...")
@@ -270,9 +260,7 @@ def parse_httpx_jsonl(jsonl_file: str) -> List[HttpxResult]:
         return []
 
 
-# ---------------------------------------------------------------------------
-# Step 3 — Nmap
-# ---------------------------------------------------------------------------
+# 3. Nmap
 
 def parse_nmap_json(json_file: str) -> List[NmapResult]:
     print(f"Parsing Nmap file: {json_file}...")
@@ -309,9 +297,8 @@ def parse_nmap_json(json_file: str) -> List[NmapResult]:
         return []
 
 
-# ---------------------------------------------------------------------------
-# Step 4 — Feroxbuster
-# ---------------------------------------------------------------------------
+# 4. Feroxbuster
+
 
 def parse_feroxbuster_json(json_file: str) -> List[FeroxbusterResult]:
     print(f"Parsing Feroxbuster file: {json_file}...")
@@ -343,9 +330,7 @@ def parse_feroxbuster_json(json_file: str) -> List[FeroxbusterResult]:
         return []
 
 
-# ---------------------------------------------------------------------------
-# Step 5 — Katana
-# ---------------------------------------------------------------------------
+# 5. Katana
 
 def parse_katana_jsonl(jsonl_file: str) -> List[KatanaResult]:
     print(f"Parsing Katana file: {jsonl_file}...")
@@ -377,9 +362,7 @@ def parse_katana_jsonl(jsonl_file: str) -> List[KatanaResult]:
         return []
 
 
-# ---------------------------------------------------------------------------
-# Step 6 — WPScan
-# ---------------------------------------------------------------------------
+# 6. WPScan
 
 def _cvss_to_severity(raw) -> str:
     try:
@@ -470,9 +453,7 @@ def parse_wpscan_json(json_file: str) -> List[WpscanFinding]:
         return []
 
 
-# ---------------------------------------------------------------------------
-# Step 7 — Nuclei
-# ---------------------------------------------------------------------------
+# 7. Nuclei
 
 def parse_nuclei_jsonl(jsonl_file: str) -> List[NucleiFinding]:
     print(f"Parsing Nuclei file: {jsonl_file}...")

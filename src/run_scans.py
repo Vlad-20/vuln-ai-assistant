@@ -7,14 +7,14 @@ import time
 import threading
 import xml.etree.ElementTree as ET
 
-# Holds the currently running subprocess so it can be killed on demand.
+# Holds the currently running subprocess so it can be killed on demand
 _current_proc: subprocess.Popen = None
 _proc_lock = threading.Lock()
 _stop_requested = threading.Event()
 
 
 def request_stop():
-    """Signal the pipeline to stop and kill the current subprocess."""
+    """Signal the pipeline to stop and kill the current subprocess"""
     _stop_requested.set()
     with _proc_lock:
         if _current_proc is not None:
@@ -56,7 +56,7 @@ NUCLEI_TIMEOUT    = 600
 # Wordlist mounted from ./wordlists on the host into the feroxbuster container
 FEROXBUSTER_WORDLIST = '/wordlists/common.txt'
 
-# WPScan API token — set the WPSCAN_API_TOKEN env var for vulnerability data
+# WPScan API token
 WPSCAN_API_TOKEN = os.environ.get('WPSCAN_API_TOKEN', 'YVGUAfJ3rKShteQfINOPras9y4Yo0gmNaso8SWxmsng')
 
 
@@ -73,14 +73,14 @@ def _is_nonempty(filepath: str) -> bool:
 
 
 def _sanitize_filename(url: str) -> str:
-    """Convert a URL/hostname to a safe filename component."""
+    """Convert a URL/hostname to a safe filename component"""
     name = re.sub(r'^https?://', '', url)
     name = re.sub(r'[^\w\-.]', '_', name)
     return name.strip('_')
 
 
 def _stop_service_containers(service_name: str):
-    """Kill any Docker containers still running for the given compose service."""
+    """Kill any Docker containers still running for the given compose service"""
     try:
         result = subprocess.run(
             ['docker', 'ps', '-q', '--filter', f'label=com.docker.compose.service={service_name}'],
@@ -95,9 +95,9 @@ def _stop_service_containers(service_name: str):
 
 
 def _run(command: list, timeout: int, service_name: str = None, stdin_data: str = None):
-    """Run a subprocess, raise CalledProcessError or TimeoutExpired on failure.
-    On timeout, also stops any orphaned Docker containers for the service.
-    Pass stdin_data to pipe text into the process's stdin."""
+    """Run a subprocess, raise CalledProcessError or TimeoutExpired on failure;
+    On timeout, also stops any orphaned Docker containers for the service;
+    Pass stdin_data to pipe text into the process's stdin"""
     global _current_proc
     proc = subprocess.Popen(
         command,
@@ -126,9 +126,7 @@ def _run(command: list, timeout: int, service_name: str = None, stdin_data: str 
             _current_proc = None
 
 
-# ---------------------------------------------------------------------------
-# Step 1 — Subfinder
-# ---------------------------------------------------------------------------
+# 1. Subfinder
 
 def run_subfinder(domain: str):
     print(f"[SUBFINDER] Starting subdomain enumeration on {domain}...")
@@ -153,9 +151,7 @@ def run_subfinder(domain: str):
         return None
 
 
-# ---------------------------------------------------------------------------
-# Step 2 — httpx
-# ---------------------------------------------------------------------------
+# 2. httpx
 
 def _collect_hosts(subfinder_jsonl: str, original_domain: str) -> set:
     """Return the set of hosts to probe: root domain + all subfinder results."""
@@ -198,7 +194,7 @@ def run_httpx(subfinder_file: str, original_domain: str):
         if _is_nonempty(HTTPX_OUT):
             print(f"[HTTPX] Complete. Results: {HTTPX_OUT}")
         else:
-            print("[HTTPX] Complete — no live hosts responded.")
+            print("[HTTPX] Complete - no live hosts responded.")
         return HTTPX_OUT
     except subprocess.TimeoutExpired:
         print(f"[HTTPX] Timed out after {HTTPX_TIMEOUT}s. Using partial results if available.")
@@ -209,12 +205,10 @@ def run_httpx(subfinder_file: str, original_domain: str):
         return HTTPX_OUT if os.path.exists(HTTPX_OUT) else None
 
 
-# ---------------------------------------------------------------------------
-# Step 3 — Nmap
-# ---------------------------------------------------------------------------
+# 3. Nmap
 
 def _nmap_xml_to_json(xml_path: str, json_path: str):
-    """Convert nmap XML output to a structured JSON file."""
+    """Convert nmap XML output to a structured JSON file"""
     tree = ET.parse(xml_path)
     root = tree.getroot()
     hosts = []
@@ -271,9 +265,7 @@ def run_nmap(target: str):
         return None
 
 
-# ---------------------------------------------------------------------------
-# Step 4 — Feroxbuster
-# ---------------------------------------------------------------------------
+# 4. Feroxbuster
 
 def run_feroxbuster(url: str):
     print(f"[FEROXBUSTER] Starting directory discovery on {url}...")
@@ -304,22 +296,16 @@ def run_feroxbuster(url: str):
         return None
 
 
-# ---------------------------------------------------------------------------
-# Step 5 — Katana
-# ---------------------------------------------------------------------------
+# 5. Katana
 
 def run_katana(url: str):
     print(f"[KATANA] Starting URL crawling on {url}...")
-    # Ensure the URL has a scheme — katana requires http:// or https://
+    # Ensure the URL has a scheme - katana requires http:// or https://
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
     safe_name = _sanitize_filename(url)
     out_local = os.path.join(OUTPUT_DIR, f'katana_{safe_name}.jsonl')
 
-    # -T disables TTY so pipes work cleanly.
-    # -d 2 caps crawl depth so katana finishes before the timeout kills it.
-    # No -o flag: we stream stdout to the host file directly so partial results
-    # are preserved even when the container is killed at timeout.
     command = [
         'docker', 'run', '--rm', '--network', 'host',
         'projectdiscovery/katana:latest',
@@ -352,8 +338,8 @@ def run_katana(url: str):
         proc.kill()
         _stop_service_containers('katana')
 
-    # Drain stderr in a background thread to prevent pipe buffer deadlock.
-    # Some katana versions also write JSONL to stderr rather than stdout.
+    # Drain stderr in a background thread to prevent pipe buffer deadlock
+    # Some katana versions also write JSONL to stderr rather than stdout
     def _drain_stderr():
         for line in proc.stderr:
             stderr_lines.append(line.rstrip('\n'))
@@ -379,8 +365,8 @@ def run_katana(url: str):
     for l in stderr_lines[:10]:
         print(f"[KATANA] stderr: {l}")
 
-    # Some katana builds write JSONL to stderr instead of stdout when piped.
-    # Use whichever stream has content; prefer stdout.
+    # Some katana builds write JSONL to stderr instead of stdout when piped
+    # Use whichever stream has content; prefer stdout
     result_lines = stdout_lines if stdout_lines else stderr_lines
 
     with open(out_local, 'w', encoding='utf-8') as f:
@@ -395,9 +381,7 @@ def run_katana(url: str):
     return out_local if _is_nonempty(out_local) else None
 
 
-# ---------------------------------------------------------------------------
-# Step 6 — WPScan (conditional — only for WordPress hosts)
-# ---------------------------------------------------------------------------
+# 6. WPScan (conditional - only for WordPress hosts)
 
 def run_wpscan(url: str):
     print(f"[WPSCAN] Starting WordPress scan on {url}...")
@@ -430,9 +414,7 @@ def run_wpscan(url: str):
         return None
 
 
-# ---------------------------------------------------------------------------
-# Step 7 — Nuclei
-# ---------------------------------------------------------------------------
+# 7. Nuclei
 
 def run_nuclei(live_urls: list):
     if not live_urls:

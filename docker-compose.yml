@@ -3,8 +3,6 @@ services:
     image: instrumentisto/nmap:latest
     entrypoint: nmap
     volumes:
-      # Mount a local './output' dir into the container's '/output'
-      # This is how we get results back to the host
       - ./output:/output
 
   subfinder:
@@ -24,7 +22,6 @@ services:
     entrypoint: feroxbuster
     volumes:
       - ./output:/output
-      # Place wordlists (e.g. common.txt) in ./wordlists on the host
       - ./wordlists:/wordlists
 
   katana:
@@ -43,5 +40,4 @@ services:
     image: projectdiscovery/nuclei:latest
     entrypoint: nuclei
     volumes:
-      # Same volume mount for nuclei
       - ./output:/output

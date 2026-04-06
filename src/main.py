@@ -12,14 +12,12 @@ def main():
     print("*** Starting FULL Scan and Parse pipeline ***")
     run_scans.setup_environment()
 
-    # ------------------------------------------------------------------
-    # Step 1 — Subdomain Enumeration (subfinder)
-    # ------------------------------------------------------------------
+    # 1. Subdomain Enumeration (subfinder)
+
     subfinder_file = run_scans.run_subfinder(TEST_TARGET)
 
-    # ------------------------------------------------------------------
-    # Step 2 — HTTP Probing & Web Tech Fingerprinting (httpx)
-    # ------------------------------------------------------------------
+    # 2. HTTP Probing & Web Tech Fingerprinting (httpx)
+
     httpx_file = run_scans.run_httpx(subfinder_file, TEST_TARGET)
 
     # Derive live hosts and WordPress targets for downstream steps
@@ -32,52 +30,46 @@ def main():
               f"{len(wordpress_urls)} WordPress host(s) detected.")
         print(f"[DEBUG] live_urls = {live_urls}")
     else:
-        print("[DEBUG] httpx_file is None — httpx produced no usable output.")
+        print("[DEBUG] httpx_file is None - httpx produced no usable output.")
 
-    # ------------------------------------------------------------------
-    # Step 3 — Port & Service Discovery (nmap) — against root domain
-    # ------------------------------------------------------------------
+    # 3.  Port & Service Discovery (nmap) -> against root domain
+
     nmap_file = run_scans.run_nmap(TEST_TARGET)
 
-    # ------------------------------------------------------------------
-    # Step 4 — Directory Discovery (feroxbuster) — per live host
-    # ------------------------------------------------------------------
+    # 4. Directory Discovery (feroxbuster) - per live host
+
     feroxbuster_files = []
     for url in live_urls:
         result = run_scans.run_feroxbuster(url)
         if result:
             feroxbuster_files.append(result)
 
-    # ------------------------------------------------------------------
-    # Step 5 — URL Collection & Crawling (katana) — per live host
-    # ------------------------------------------------------------------
+    # 5. URL Collection & Crawling (katana) - per live host
+
     katana_files = []
     for url in live_urls:
         result = run_scans.run_katana(url)
         if result:
             katana_files.append(result)
 
-    # ------------------------------------------------------------------
-    # Step 6 — CMS-Specific Scanning (WPScan) — WordPress hosts only
-    # ------------------------------------------------------------------
+    # 6. CMS-Specific Scanning (WPScan) - WordPress hosts only
+
     wpscan_files = []
     if wordpress_urls:
-        print(f"[PIPELINE] WordPress detected — running WPScan on {len(wordpress_urls)} host(s).")
+        print(f"[PIPELINE] WordPress detected - running WPScan on {len(wordpress_urls)} host(s).")
         for url in wordpress_urls:
             result = run_scans.run_wpscan(url)
             if result:
                 wpscan_files.append(result)
     else:
-        print("[PIPELINE] No WordPress hosts detected — skipping WPScan.")
+        print("[PIPELINE] No WordPress hosts detected - skipping WPScan.")
 
-    # ------------------------------------------------------------------
-    # Step 7 — Vulnerability Scanning (nuclei) — all live hosts
-    # ------------------------------------------------------------------
+    # 7. Vulnerability Scanning (nuclei) - all live hosts
+
     nuclei_file = run_scans.run_nuclei(live_urls)
 
-    # ------------------------------------------------------------------
     # Normalize all findings
-    # ------------------------------------------------------------------
+
     print("\n*** Starting normalization ***")
     all_findings = []
 

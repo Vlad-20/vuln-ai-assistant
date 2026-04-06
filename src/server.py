@@ -17,17 +17,13 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='/static')
 
-# ---------------------------------------------------------------------------
 # Single-user global state
-# ---------------------------------------------------------------------------
+
 _event_queue: queue.Queue = queue.Queue()
 _scan_running = threading.Event()
 _state: dict = {'output_file': None}
 
-
-# ---------------------------------------------------------------------------
 # Routes
-# ---------------------------------------------------------------------------
 
 @app.route('/')
 def index():
@@ -97,10 +93,7 @@ def download():
                          mimetype='application/json')
     return jsonify({'error': 'No results available yet.'}), 404
 
-
-# ---------------------------------------------------------------------------
 # Pipeline helpers
-# ---------------------------------------------------------------------------
 
 def _emit(event: dict):
     _event_queue.put(event)
@@ -114,17 +107,14 @@ def _step_end(step_id: str, status: str, message: str = ''):
 def _log(msg: str):
     _emit({'type': 'log', 'message': msg})
 
-
-# ---------------------------------------------------------------------------
 # Scan pipeline (background thread)
-# ---------------------------------------------------------------------------
 
 def _is_stopped() -> bool:
     return run_scans.is_stop_requested()
 
 
 def _run_pipeline(target: str):
-    # Track all collected file paths so the normalize step can always run.
+    # Track all collected file paths so the normalize step can always run
     collected: dict = {
         'subfinder_file': None,
         'httpx_file': None,
@@ -139,13 +129,13 @@ def _run_pipeline(target: str):
     try:
         run_scans.setup_environment()
 
-        # 1 — Subfinder
+        # 1. Subfinder
         _step_start('subfinder', 'Subdomain Enumeration')
         collected['subfinder_file'] = run_scans.run_subfinder(target)
         _step_end('subfinder', 'success' if collected['subfinder_file'] else 'error')
         if _is_stopped(): stopped = True; return
 
-        # 2 — httpx
+        # 2. httpx
         _step_start('httpx', 'HTTP Probing & Tech Detection')
         collected['httpx_file'] = run_scans.run_httpx(collected['subfinder_file'], target)
         _step_end('httpx', 'success' if collected['httpx_file'] else 'error')
@@ -156,15 +146,15 @@ def _run_pipeline(target: str):
             live_urls, wordpress_urls = parsers.extract_live_hosts(collected['httpx_file'])
             _log(f"Found {len(live_urls)} live host(s), {len(wordpress_urls)} WordPress host(s).")
         else:
-            _log("httpx produced no output — downstream steps will be skipped.")
+            _log("httpx produced no output - downstream steps will be skipped.")
 
-        # 3 — Nmap
+        # 3. Nmap
         _step_start('nmap', 'Port & Service Discovery')
         collected['nmap_file'] = run_scans.run_nmap(target)
         _step_end('nmap', 'success' if collected['nmap_file'] else 'error')
         if _is_stopped(): stopped = True; return
 
-        # 4 — Feroxbuster
+        # 4. Feroxbuster
         _step_start('feroxbuster',
                     f'Directory Discovery ({len(live_urls)} host(s))' if live_urls else 'Directory Discovery')
         if live_urls:
@@ -180,7 +170,7 @@ def _run_pipeline(target: str):
             _step_end('feroxbuster', 'skipped', 'No live hosts from httpx')
         if _is_stopped(): stopped = True; return
 
-        # 5 — Katana
+        # 5. Katana
         _step_start('katana',
                     f'URL Crawling ({len(live_urls)} host(s))' if live_urls else 'URL Crawling')
         if live_urls:
@@ -196,7 +186,7 @@ def _run_pipeline(target: str):
             _step_end('katana', 'skipped', 'No live hosts from httpx')
         if _is_stopped(): stopped = True; return
 
-        # 6 — WPScan
+        # 6. WPScan
         _step_start('wpscan',
                     f'WordPress Scanning ({len(wordpress_urls)} host(s))' if wordpress_urls else 'WordPress Scanning')
         if wordpress_urls:
@@ -211,7 +201,7 @@ def _run_pipeline(target: str):
             _step_end('wpscan', 'skipped', 'No WordPress hosts detected')
         if _is_stopped(): stopped = True; return
 
-        # 7 — Nuclei
+        # 7. Nuclei
         _step_start('nuclei', 'Vulnerability Scanning')
         if live_urls:
             collected['nuclei_file'] = run_scans.run_nuclei(live_urls)
@@ -224,7 +214,7 @@ def _run_pipeline(target: str):
         stopped = True
 
     finally:
-        # Always normalize and write whatever was collected, even if stopped early.
+        # Always normalize and write whatever was collected, even if stopped early
         _normalize_and_finish(collected, stopped)
         _scan_running.clear()
 
