@@ -3,6 +3,8 @@ import parsers
 import json
 from dataclasses import asdict
 import os
+from target_utils import normalize_target, is_public_domain
+
 
 TEST_TARGET = "vladvlaicu.com"
 OUTPUT_FILE = os.path.join(run_scans.OUTPUT_DIR, 'normalized_findings.jsonl')
@@ -12,13 +14,23 @@ def main():
     print("*** Starting FULL Scan and Parse pipeline ***")
     run_scans.setup_environment()
 
-    # 1. Subdomain Enumeration (subfinder)
+    hostname, url = normalize_target(TEST_TARGET)
+    print(f"[PIPELINE] Normalized target: hostname='{hostname}', url='{url}'")
 
-    subfinder_file = run_scans.run_subfinder(TEST_TARGET)
+    # 1. Subdomain Enumeration (subfinder) - skip for non-public domains (IPs, internal hostnames)
+
+    if is_public_domain(hostname):
+        subfinder_file = run_scans.run_subfinder(hostname)
+    else:
+        print(f"[PIPELINE] Skipping subfinder - '{hostname}' is not a public domain.")
+        subfinder_file = None
 
     # 2. HTTP Probing & Web Tech Fingerprinting (httpx)
-
-    httpx_file = run_scans.run_httpx(subfinder_file, TEST_TARGET)
+    # For public domains, pass the hostname so httpx discovers both http and https.
+    # For non-public targets (IPs, internal Docker hostnames), pass the full URL
+    # so httpx gets an explicit scheme.
+    httpx_seed = hostname if is_public_domain(hostname) else url
+    httpx_file = run_scans.run_httpx(subfinder_file, httpx_seed)
 
     # Derive live hosts and WordPress targets for downstream steps
     live_urls: list = []
@@ -32,9 +44,9 @@ def main():
     else:
         print("[DEBUG] httpx_file is None - httpx produced no usable output.")
 
-    # 3.  Port & Service Discovery (nmap) -> against root domain
+    # 3.  Port & Service Discovery (nmap) -> needs a bare hostname, NOT a URL
 
-    nmap_file = run_scans.run_nmap(TEST_TARGET)
+    nmap_file = run_scans.run_nmap(hostname)
 
     # 4. Directory Discovery (feroxbuster) - per live host
 

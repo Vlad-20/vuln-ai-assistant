@@ -2,24 +2,32 @@ services:
   nmap:
     image: instrumentisto/nmap:latest
     entrypoint: nmap
+    networks:
+      - scan-net
     volumes:
       - ./output:/output
 
   subfinder:
     image: projectdiscovery/subfinder:latest
     entrypoint: subfinder
+    networks:
+      - scan-net
     volumes:
       - ./output:/output
 
   httpx:
     image: projectdiscovery/httpx:latest
     entrypoint: httpx
+    networks:
+      - scan-net
     volumes:
       - ./output:/output
 
   feroxbuster:
     image: epi052/feroxbuster:latest
     entrypoint: feroxbuster
+    networks:
+      - scan-net
     volumes:
       - ./output:/output
       - ./wordlists:/wordlists
@@ -33,11 +41,19 @@ services:
 
   wpscan:
     image: wpscanteam/wpscan:latest
+    networks:
+      - scan-net
     volumes:
       - ./output:/output
 
   nuclei:
     image: projectdiscovery/nuclei:latest
     entrypoint: nuclei
+    networks:
+      - scan-net
     volumes:
       - ./output:/output
+
+networks:
+  scan-net:
+    external: true

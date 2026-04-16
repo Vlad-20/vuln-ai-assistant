@@ -154,7 +154,11 @@ def run_subfinder(domain: str):
 # 2. httpx
 
 def _collect_hosts(subfinder_jsonl: str, original_domain: str) -> set:
-    """Return the set of hosts to probe: root domain + all subfinder results."""
+    """
+    Return the set of hosts/URLs to probe: the original target + all subfinder results.
+    `original_domain` may be a bare hostname (public domain) or a full URL
+    (for internal/IP targets that need an explicit scheme).
+    """
     hosts = {original_domain}
     if subfinder_jsonl and _is_nonempty(subfinder_jsonl):
         try:
@@ -303,6 +307,22 @@ def run_katana(url: str):
     # Ensure the URL has a scheme - katana requires http:// or https://
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
+
+    # katana runs with --network host, so it cannot resolve docker-compose
+    # service hostnames (e.g. 'dvwa'). Rewrite known internal targets to
+    # the host-accessible published port.
+    KATANA_HOST_MAP = {
+        'http://dvwa':  'http://127.0.0.1:4280',
+        'https://dvwa': 'http://127.0.0.1:4280',
+        # add more target mappings here as needed
+    }
+    for internal, external in KATANA_HOST_MAP.items():
+        if url.startswith(internal):
+            translated = url.replace(internal, external, 1)
+            print(f"[KATANA] Translating {url} -> {translated} (host networking)")
+            url = translated
+            break
+
     safe_name = _sanitize_filename(url)
     out_local = os.path.join(OUTPUT_DIR, f'katana_{safe_name}.jsonl')
 

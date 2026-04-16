@@ -11,6 +11,7 @@ from flask import stream_with_context
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import run_scans
 import parsers
+from target_utils import normalize_target, is_public_domain
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -129,15 +130,26 @@ def _run_pipeline(target: str):
     try:
         run_scans.setup_environment()
 
-        # 1. Subfinder
+        hostname, target_url = normalize_target(target)
+        _log(f"Normalized target: hostname='{hostname}'")
+
+        # 1. Subfinder - skip for non-public domains (IPs, internal hostnames)
         _step_start('subfinder', 'Subdomain Enumeration')
-        collected['subfinder_file'] = run_scans.run_subfinder(target)
-        _step_end('subfinder', 'success' if collected['subfinder_file'] else 'error')
+        if is_public_domain(hostname):
+            collected['subfinder_file'] = run_scans.run_subfinder(hostname)
+            _step_end('subfinder', 'success' if collected['subfinder_file'] else 'error')
+        else:
+            _log(f"Skipping subfinder — '{hostname}' is not a public domain.")
+            _step_end('subfinder', 'skipped', 'Internal/IP target')
         if _is_stopped(): stopped = True; return
 
         # 2. httpx
+        # For public domains, pass the hostname so httpx discovers both http and https.
+        # For non-public targets (IPs, internal Docker hostnames), pass the full URL
+        # so httpx gets an explicit scheme.
+        httpx_seed = hostname if is_public_domain(hostname) else target_url
         _step_start('httpx', 'HTTP Probing & Tech Detection')
-        collected['httpx_file'] = run_scans.run_httpx(collected['subfinder_file'], target)
+        collected['httpx_file'] = run_scans.run_httpx(collected['subfinder_file'], httpx_seed)
         _step_end('httpx', 'success' if collected['httpx_file'] else 'error')
         if _is_stopped(): stopped = True; return
 
@@ -148,9 +160,9 @@ def _run_pipeline(target: str):
         else:
             _log("httpx produced no output - downstream steps will be skipped.")
 
-        # 3. Nmap
+        # 3. Nmap - needs a bare hostname, NOT a URL
         _step_start('nmap', 'Port & Service Discovery')
-        collected['nmap_file'] = run_scans.run_nmap(target)
+        collected['nmap_file'] = run_scans.run_nmap(hostname)
         _step_end('nmap', 'success' if collected['nmap_file'] else 'error')
         if _is_stopped(): stopped = True; return
 
