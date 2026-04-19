@@ -302,32 +302,31 @@ def run_feroxbuster(url: str):
 
 # 5. Katana
 
-def run_katana(url: str):
+def run_katana(url: str, network: str = os.getenv('KATANA_NETWORK', 'scan-net')):
     print(f"[KATANA] Starting URL crawling on {url}...")
     # Ensure the URL has a scheme - katana requires http:// or https://
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
 
-    # katana runs with --network host, so it cannot resolve docker-compose
-    # service hostnames (e.g. 'dvwa'). Rewrite known internal targets to
-    # the host-accessible published port.
-    KATANA_HOST_MAP = {
-        'http://dvwa':  'http://127.0.0.1:4280',
-        'https://dvwa': 'http://127.0.0.1:4280',
-        # add more target mappings here as needed
-    }
-    for internal, external in KATANA_HOST_MAP.items():
-        if url.startswith(internal):
-            translated = url.replace(internal, external, 1)
-            print(f"[KATANA] Translating {url} -> {translated} (host networking)")
-            url = translated
-            break
+    # --network host can't resolve compose service hostnames; rewrite to host ports.
+    # On scan-net, Docker DNS handles this natively — no translation needed.
+    if network == 'host':
+        KATANA_HOST_MAP = {
+            'http://dvwa':  'http://127.0.0.1:4280',
+            'https://dvwa': 'http://127.0.0.1:4280',
+        }
+        for internal, external in KATANA_HOST_MAP.items():
+            if url.startswith(internal):
+                translated = url.replace(internal, external, 1)
+                print(f"[KATANA] Translating {url} -> {translated} (host networking)")
+                url = translated
+                break
 
     safe_name = _sanitize_filename(url)
     out_local = os.path.join(OUTPUT_DIR, f'katana_{safe_name}.jsonl')
 
     command = [
-        'docker', 'run', '--rm', '--network', 'host',
+        'docker', 'run', '--rm', '--network', network,
         'projectdiscovery/katana:latest',
         '-u', url,
         '-jsonl',

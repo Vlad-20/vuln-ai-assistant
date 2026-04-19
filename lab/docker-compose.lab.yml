@@ -1,0 +1,48 @@
+services:
+  dvwa:
+    image: ghcr.io/digininja/dvwa:latest
+    ports:
+      - "4280:80"
+    environment:
+      DEFAULT_SECURITY_LEVEL: low
+      DVWA_DISABLE_AUTH: "true"
+      DB_SERVER: dvwa-db
+    networks:
+      scan-net:
+        aliases:
+          - dvwa
+    depends_on:
+      - dvwa-db
+    restart: unless-stopped
+
+  dvwa-db:
+    image: mariadb:10
+    environment:
+      MYSQL_USER: dvwa
+      MYSQL_PASSWORD: p@ssw0rd
+      MYSQL_ROOT_PASSWORD: dvwa
+      MYSQL_DATABASE: dvwa
+    volumes:
+      - dvwa-data:/var/lib/mysql
+    networks:
+      scan-net:
+        aliases:
+          - dvwa-db
+    restart: unless-stopped
+
+  juice-shop:
+    image: bkimminich/juice-shop
+    ports:
+      - "3000:3000"
+    networks:
+      scan-net:
+        aliases:
+          - juice-shop
+    restart: unless-stopped
+
+networks:
+  scan-net:
+    external: true
+
+volumes:
+  dvwa-data:
