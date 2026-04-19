@@ -40,9 +40,42 @@ services:
           - juice-shop
     restart: unless-stopped
 
+  vulnerable-wp:
+    image: wordpress:5.0-php7.1-apache
+    ports:
+      - "8081:80"
+    environment:
+      WORDPRESS_DB_HOST: wp-db
+      WORDPRESS_DB_USER: wpuser
+      WORDPRESS_DB_PASSWORD: wppass
+      WORDPRESS_DB_NAME: wordpress
+    networks:
+      scan-net:
+        aliases:
+          - vulnerable-wp
+    depends_on:
+      - wp-db
+    restart: unless-stopped
+
+  wp-db:
+    image: mariadb:10
+    environment:
+      MYSQL_USER: wpuser
+      MYSQL_PASSWORD: wppass
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: wordpress
+    volumes:
+      - wp-data:/var/lib/mysql
+    networks:
+      scan-net:
+        aliases:
+          - wp-db
+    restart: unless-stopped
+
 networks:
   scan-net:
     external: true
 
 volumes:
   dvwa-data:
+  wp-data:

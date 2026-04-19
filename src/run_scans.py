@@ -34,6 +34,7 @@ def reset_stop():
 
 # Define output directory
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'output')
+COMPOSE_FILE = os.path.join(os.path.dirname(__file__), '..', 'docker-compose.yml')
 
 # Output file paths
 SUBFINDER_OUT = os.path.join(OUTPUT_DIR, 'subfinder_results.jsonl')
@@ -131,7 +132,7 @@ def _run(command: list, timeout: int, service_name: str = None, stdin_data: str 
 def run_subfinder(domain: str):
     print(f"[SUBFINDER] Starting subdomain enumeration on {domain}...")
     command = [
-        'docker-compose', 'run', '--rm', 'subfinder',
+        'docker-compose', '-f', COMPOSE_FILE, 'run', '--rm', 'subfinder',
         '-d', domain,
         '-json', '-all', '-silent',
         '-o', '/output/subfinder_results.jsonl'
@@ -178,16 +179,36 @@ def _collect_hosts(subfinder_jsonl: str, original_domain: str) -> set:
     return hosts
 
 
+def _to_httpx_input(entry: str) -> str:
+    """
+    Convert a URL or bare hostname to the host:port format expected by httpx.
+    httpx v1.9+ requires host:port or host.with.dots — bare single-label
+    hostnames (e.g. 'dvwa') are mis-parsed as URL paths, causing silent failures.
+    FQDNs from subfinder (e.g. 'sub.example.com') are left as-is.
+    """
+    if '://' in entry:
+        from urllib.parse import urlparse as _up
+        p = _up(entry)
+        port = p.port or (443 if p.scheme == 'https' else 80)
+        return f'{p.hostname}:{port}'
+    # If no dots in the name, it's a single-label internal hostname — add port
+    if entry and '.' not in entry.split(':')[0]:
+        host = entry.split(':')[0]
+        port = entry.split(':')[1] if ':' in entry else '80'
+        return f'{host}:{port}'
+    return entry
+
+
 def run_httpx(subfinder_file: str, original_domain: str):
     print(f"[HTTPX] Starting HTTP probing and tech fingerprinting...")
     hosts = _collect_hosts(subfinder_file, original_domain)
     print(f"[HTTPX] Probing {len(hosts)} host(s).")
 
-    # Pipe hosts via stdin to avoid Windows/WSL2 volume-read issues with -l flag
-    hosts_input = '\n'.join(sorted(hosts)) + '\n'
+    # httpx v1.9+ requires host:port for single-label internal hostnames
+    hosts_input = '\n'.join(_to_httpx_input(h) for h in sorted(hosts)) + '\n'
 
     command = [
-        'docker-compose', 'run', '--rm', '-T',  # -T disables TTY so stdin can be piped
+        'docker-compose', '-f', COMPOSE_FILE, 'run', '--rm', '-T',  # -T disables TTY so stdin can be piped
         'httpx',
         '-json', '-sc', '-title', '-td', '-server', '-cdn', '-ip',
         '-o', '/output/httpx_results.jsonl',
@@ -243,7 +264,7 @@ def _nmap_xml_to_json(xml_path: str, json_path: str):
 def run_nmap(target: str):
     print(f"[NMAP] Starting port scan on {target}...")
     command = [
-        'docker-compose', 'run', '--rm', 'nmap',
+        'docker-compose', '-f', COMPOSE_FILE, 'run', '--rm', 'nmap',
         '-sV', '--top-ports', '100', '-n', '-Pn',
         '-oX', '/output/nmap_results.xml',
         target
@@ -278,7 +299,7 @@ def run_feroxbuster(url: str):
     out_local = os.path.join(OUTPUT_DIR, f'feroxbuster_{safe_name}.json')
 
     command = [
-        'docker-compose', 'run', '--rm', 'feroxbuster',
+        'docker-compose', '-f', COMPOSE_FILE, 'run', '--rm', 'feroxbuster',
         '--json',
         '-u', url,
         '-w', FEROXBUSTER_WORDLIST,
@@ -409,7 +430,7 @@ def run_wpscan(url: str):
     out_local = os.path.join(OUTPUT_DIR, f'wpscan_{safe_name}.json')
 
     command = [
-        'docker-compose', 'run', '--rm', 'wpscan',
+        'docker-compose', '-f', COMPOSE_FILE, 'run', '--rm', 'wpscan',
         '--url', url,
         '--format', 'json',
         '-o', out_container,
@@ -446,7 +467,7 @@ def run_nuclei(live_urls: list):
     targets_input = '\n'.join(live_urls) + '\n'
 
     command = [
-        'docker-compose', 'run', '--rm', '-T',  # -T disables TTY so stdin can be piped
+        'docker-compose', '-f', COMPOSE_FILE, 'run', '--rm', '-T',  # -T disables TTY so stdin can be piped
         'nuclei',
         '-as',
         '-jsonl',

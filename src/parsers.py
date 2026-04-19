@@ -69,6 +69,17 @@ class WpscanFinding:
     description: str
     finding_type: str  # "vulnerability", "user_enumerated", "interesting_finding"
     references: Dict[str, Any]
+    version: str = ''
+
+
+@dataclass
+class AppVersionProbeFinding:
+    tool: str = "app_version_probe"
+    url: str = ''                    # base URL that was probed (scheme://host:port)
+    endpoint: str = ''               # full URL of the version endpoint
+    product: str = ''
+    version: str = ''
+    raw_response_snippet: str = ''   # truncated to ~200 chars
 
 
 # Utility
@@ -386,6 +397,7 @@ def parse_wpscan_json(json_file: str) -> List[WpscanFinding]:
             data = json.load(f)
 
         target_url = data.get('target_url', 'unknown')
+        wp_version = (data.get('version') or {}).get('number', '')
 
         for item in data.get('interesting_findings', []):
             results.append(WpscanFinding(
@@ -396,10 +408,11 @@ def parse_wpscan_json(json_file: str) -> List[WpscanFinding]:
                 description=item.get('to_s', ''),
                 finding_type='interesting_finding',
                 references=item.get('references', {}),
+                version=wp_version,
             ))
 
-        wp_version = data.get('version') or {}
-        for vuln in wp_version.get('vulnerabilities', []):
+        wp_version_block = data.get('version') or {}
+        for vuln in wp_version_block.get('vulnerabilities', []):
             results.append(WpscanFinding(
                 tool="wpscan",
                 host=target_url,
@@ -408,6 +421,7 @@ def parse_wpscan_json(json_file: str) -> List[WpscanFinding]:
                 description=vuln.get('title', ''),
                 finding_type='vulnerability',
                 references=vuln.get('references', {}),
+                version=wp_version,
             ))
 
         for plugin_name, plugin_data in data.get('plugins', {}).items():
@@ -420,6 +434,7 @@ def parse_wpscan_json(json_file: str) -> List[WpscanFinding]:
                     description=f"Plugin '{plugin_name}': {vuln.get('title', '')}",
                     finding_type='vulnerability',
                     references=vuln.get('references', {}),
+                    version=wp_version,
                 ))
 
         for theme_name, theme_data in data.get('themes', {}).items():
@@ -432,6 +447,7 @@ def parse_wpscan_json(json_file: str) -> List[WpscanFinding]:
                     description=f"Theme '{theme_name}': {vuln.get('title', '')}",
                     finding_type='vulnerability',
                     references=vuln.get('references', {}),
+                    version=wp_version,
                 ))
 
         for username in data.get('users', {}):
@@ -443,6 +459,7 @@ def parse_wpscan_json(json_file: str) -> List[WpscanFinding]:
                 description=f"WordPress user '{username}' enumerated at {target_url}.",
                 finding_type='user_enumerated',
                 references={},
+                version=wp_version,
             ))
 
         results = dedup_wpscan(results)

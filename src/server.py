@@ -11,6 +11,7 @@ from flask import stream_with_context
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import run_scans
 import parsers
+import enrichment
 from target_utils import normalize_target, is_public_domain
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
@@ -124,6 +125,7 @@ def _run_pipeline(target: str):
         'katana_files': [],
         'wpscan_files': [],
         'nuclei_file': None,
+        'app_version_probe_findings': [],
     }
     stopped = False
 
@@ -159,6 +161,17 @@ def _run_pipeline(target: str):
             _log(f"Found {len(live_urls)} live host(s), {len(wordpress_urls)} WordPress host(s).")
         else:
             _log("httpx produced no output - downstream steps will be skipped.")
+
+        # 2.5 App-version probe
+        _step_start('app_version_probe', 'App Version Detection')
+        if live_urls:
+            probe_results = enrichment.probe_app_versions(live_urls)
+            collected['app_version_probe_findings'] = probe_results
+            _step_end('app_version_probe', 'success',
+                      f'{len(probe_results)} version(s) detected')
+        else:
+            _step_end('app_version_probe', 'skipped', 'No live hosts from httpx')
+        if _is_stopped(): stopped = True; return
 
         # 3. Nmap - needs a bare hostname, NOT a URL
         _step_start('nmap', 'Port & Service Discovery')
@@ -249,6 +262,18 @@ def _normalize_and_finish(collected: dict, stopped: bool):
             all_findings.extend(parsers.parse_wpscan_json(f))
         if collected['nuclei_file']:
             all_findings.extend(parsers.parse_nuclei_jsonl(collected['nuclei_file']))
+        all_findings.extend(collected['app_version_probe_findings'])
+
+        # Enrichment: CVE / EPSS / KEV annotation
+        _step_start('enrichment', 'CVE / EPSS Enrichment')
+        try:
+            enrichment_results = enrichment.enrich([asdict(x) for x in all_findings])
+            all_findings.extend(enrichment_results)
+            _step_end('enrichment', 'success',
+                      f'{len(enrichment_results)} enrichment finding(s)')
+        except Exception as enrich_err:
+            _step_end('enrichment', 'error', str(enrich_err))
+            all_findings.append(enrichment.EnrichmentErrorFinding(message=str(enrich_err)))
 
         if all_findings:
             out_path = os.path.join(run_scans.OUTPUT_DIR, 'normalized_findings.json')
@@ -272,5 +297,5 @@ def _normalize_and_finish(collected: dict, stopped: bool):
 
 
 if __name__ == '__main__':
-    print("VulnAI Scanner UI  →  http://localhost:5000")
+    print("VulnAI Scanner UI  ->  http://localhost:5000")
     app.run(host='0.0.0.0', port=5000, threaded=True, debug=False)
