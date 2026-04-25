@@ -63,10 +63,15 @@ WPSCAN_API_TOKEN = os.environ.get('WPSCAN_API_TOKEN', 'YVGUAfJ3rKShteQfINOPras9y
 
 def setup_environment():
     print("Setting up environment...")
-    if os.path.exists(OUTPUT_DIR):
-        shutil.rmtree(OUTPUT_DIR)
-    os.makedirs(OUTPUT_DIR)
-    print(f"Created new output directory: {OUTPUT_DIR}")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    for entry in os.scandir(OUTPUT_DIR):
+        if entry.name == 'cache':
+            continue
+        if entry.is_file():
+            os.remove(entry.path)
+        elif entry.is_dir():
+            shutil.rmtree(entry.path)
+    print(f"Cleared tool output files in: {OUTPUT_DIR}")
 
 
 def _is_nonempty(filepath: str) -> bool:
@@ -351,7 +356,7 @@ def run_katana(url: str, network: str = os.getenv('KATANA_NETWORK', 'scan-net'))
         'projectdiscovery/katana:latest',
         '-u', url,
         '-jsonl',
-        '-d', '2',
+        '-jc',
     ]
     print(f"[KATANA] Command: {' '.join(command)}")
 
