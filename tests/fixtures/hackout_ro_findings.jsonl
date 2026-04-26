@@ -1,0 +1,21 @@
+{"tool": "subfinder", "subdomain": "www.hackout.ro", "parent_domain": "hackout.ro", "sources": ["thc"]}
+{"tool": "subfinder", "subdomain": "webmail.hackout.ro", "parent_domain": "hackout.ro", "sources": ["rapiddns"]}
+{"tool": "subfinder", "subdomain": "harta.hackout.ro", "parent_domain": "hackout.ro", "sources": ["rapiddns"]}
+{"tool": "subfinder", "subdomain": "ns2.hackout.ro", "parent_domain": "hackout.ro", "sources": ["thc"]}
+{"tool": "subfinder", "subdomain": "roguard.hackout.ro", "parent_domain": "hackout.ro", "sources": ["rapiddns"]}
+{"tool": "subfinder", "subdomain": "mail.hackout.ro", "parent_domain": "hackout.ro", "sources": ["rapiddns"]}
+{"tool": "subfinder", "subdomain": "dc-5f09b6c0d9a8.hackout.ro", "parent_domain": "hackout.ro", "sources": ["rapiddns"]}
+{"tool": "subfinder", "subdomain": "_dc-mx.589dcacf336b.hackout.ro", "parent_domain": "hackout.ro", "sources": ["rapiddns"]}
+{"tool": "subfinder", "subdomain": "ns1.hackout.ro", "parent_domain": "hackout.ro", "sources": ["thc"]}
+{"tool": "httpx", "url": "http://ns1.hackout.ro", "status_code": 200, "title": "Web Server's Default Page", "technologies": ["Cloudflare", "HTTP/3"], "webserver": "cloudflare", "ip": "", "cdn": true}
+{"tool": "nmap", "host": "104.21.40.64", "port": 80, "protocol": "tcp", "service": "http", "product": "Cloudflare http proxy", "version": ""}
+{"tool": "nmap", "host": "104.21.40.64", "port": 443, "protocol": "tcp", "service": "http", "product": "Cloudflare http proxy", "version": ""}
+{"tool": "nmap", "host": "104.21.40.64", "port": 8080, "protocol": "tcp", "service": "http", "product": "Cloudflare http proxy", "version": ""}
+{"tool": "nmap", "host": "104.21.40.64", "port": 8443, "protocol": "tcp", "service": "http", "product": "Cloudflare http proxy", "version": ""}
+{"tool": "feroxbuster", "url": "http://ns1.hackout.ro/", "status": 200, "content_length": 1658}
+{"tool": "feroxbuster", "url": "http://ns1.hackout.ro/index.html", "status": 200, "content_length": 1658}
+{"tool": "feroxbuster", "url": "http://ns1.hackout.ro/robots.txt", "status": 200, "content_length": 1248}
+{"tool": "katana", "url": "http://ns1.hackout.ro", "method": "GET", "source": ""}
+{"tool": "nuclei", "host": "ns1.hackout.ro", "finding_name": "Plesk Default Test Page", "severity": "info", "description": "", "template_id": "default-plesk-page", "matcher_name": "", "matched_at": "http://ns1.hackout.ro", "extracted_results": [], "curl_command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (X11; Linux i686; rv:121.0) Gecko/20100101 Firefox/121.0' 'http://ns1.hackout.ro'", "references": []}
+{"tool": "nuclei", "host": "ns1.hackout.ro", "finding_name": "Wappalyzer Technology Detection", "severity": "info", "description": "", "template_id": "tech-detect", "matcher_name": "cloudflare", "matched_at": "http://ns1.hackout.ro", "extracted_results": [], "curl_command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15' 'http://ns1.hackout.ro'", "references": []}
+{"tool": "nuclei", "host": "ns1.hackout.ro", "finding_name": "WAF Detection", "severity": "info", "description": "A web application firewall was detected.", "template_id": "waf-detect", "matcher_name": "cloudflare", "matched_at": "http://ns1.hackout.ro", "extracted_results": [], "curl_command": "curl -X 'POST' -d '_=<script>alert(1)</script>' -H 'Content-Type: application/x-www-form-urlencoded' -H 'Host: ns1.hackout.ro' -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/118.0' 'http://ns1.hackout.ro'", "references": ["https://github.com/Ekultek/WhatWaf"]}

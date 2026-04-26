@@ -6,7 +6,7 @@ import os
 from target_utils import normalize_target, is_public_domain
 
 
-TEST_TARGET = "vladvlaicu.com"
+TEST_TARGET = "hackout.ro"
 OUTPUT_FILE = os.path.join(run_scans.OUTPUT_DIR, 'normalized_findings.jsonl')
 
 

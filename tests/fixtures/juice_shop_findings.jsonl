@@ -1,0 +1,13 @@
+{"tool": "httpx", "url": "http://juice-shop:3000", "status_code": 200, "title": "OWASP Juice Shop", "technologies": [], "webserver": "", "ip": "172.20.0.5", "cdn": ""}
+{"tool": "nmap", "host": "juice-shop", "port": 80, "protocol": "tcp", "service": "http", "product": "Node.js Express framework", "version": ""}
+{"tool": "nmap", "host": "juice-shop", "port": 3306, "protocol": "tcp", "service": "mysql", "product": "MySQL", "version": "8.0.27"}
+{"tool": "feroxbuster", "url": "http://juice-shop:3000/", "status": 200, "content_length": 1234}
+{"tool": "feroxbuster", "url": "http://juice-shop:3000/.env", "status": 200, "content_length": 512}
+{"tool": "feroxbuster", "url": "http://juice-shop:3000/ftp", "status": 200, "content_length": 1024}
+{"tool": "feroxbuster", "url": "http://juice-shop:3000/api/swagger", "status": 200, "content_length": 3456}
+{"tool": "feroxbuster", "url": "http://juice-shop:3000/robots.txt", "status": 200, "content_length": 48}
+{"tool": "katana", "url": "http://juice-shop:3000/", "method": "GET", "source": ""}
+{"tool": "katana", "url": "http://juice-shop:3000/rest/products/search", "method": "GET", "source": ""}
+{"tool": "nuclei", "host": "juice-shop:3000", "finding_name": "Wappalyzer Technology Detection", "severity": "info", "description": "", "template_id": "tech-detect", "matcher_name": "nodejs", "matched_at": "http://juice-shop:3000", "extracted_results": [], "curl_command": "", "references": []}
+{"tool": "nuclei", "host": "juice-shop:3000", "finding_name": "Juice Shop Detect", "severity": "info", "description": "OWASP Juice Shop detected", "template_id": "juice-shop-detect", "matcher_name": "", "matched_at": "http://juice-shop:3000", "extracted_results": ["15.0.0"], "curl_command": "", "references": []}
+{"tool": "app_version_probe", "url": "http://juice-shop:3000", "endpoint": "http://juice-shop:3000/api/Challenges", "product": "Juice Shop", "version": "15.0.0", "raw_response_snippet": "{\"status\":\"success\",\"data\":[{\"id\":1"}
