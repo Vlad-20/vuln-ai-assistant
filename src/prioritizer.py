@@ -253,6 +253,9 @@ def _fingerprint(finding: dict) -> Optional[tuple]:
             )
         if tool == "app_version_probe":
             return ("app_version_probe", finding.get("url", ""), finding.get("product", ""))
+        if tool == "enrichment":
+            # Unique per (CVE, host) — allows the CVE rule branch in score() to fire
+            return ("enrichment", finding.get("cve_id", ""), finding.get("host", ""))
     except Exception as exc:
         log.warning("Could not fingerprint finding (tool=%s): %s", tool, exc)
     return None

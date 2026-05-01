@@ -263,6 +263,34 @@
 
     .btn-row { display: flex; gap: 0.6rem; }
     .btn-row .btn { flex: 1; padding: 0.65rem; font-size: 0.9rem; }
+
+    /* Priority breakdown */
+    .prio-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    .prio-cell {
+      background: var(--surface2);
+      border: 1px solid;
+      border-radius: 8px;
+      padding: 0.7rem 0.4rem;
+      text-align: center;
+    }
+    .prio-val  { font-size: 1.8rem; font-weight: 700; line-height: 1; }
+    .prio-lbl  { font-size: 0.68rem; text-transform: uppercase;
+                 letter-spacing: 0.06em; margin-top: 0.3rem; color: var(--muted); }
+    .prio-cell.critical { border-color: #f85149; }
+    .prio-cell.critical .prio-val { color: #f85149; }
+    .prio-cell.high     { border-color: #ffa657; }
+    .prio-cell.high     .prio-val { color: #ffa657; }
+    .prio-cell.medium   { border-color: #e3b341; }
+    .prio-cell.medium   .prio-val { color: #e3b341; }
+    .prio-cell.low      { border-color: var(--blue); }
+    .prio-cell.low      .prio-val { color: var(--blue); }
+    .prio-cell.info     { border-color: var(--gray); }
+    .prio-cell.info     .prio-val { color: var(--muted); }
   </style>
 </head>
 <body>
@@ -301,15 +329,55 @@
 
   <!-- Results (hidden until done) -->
   <div class="card" id="results-card">
-    <div class="card-label">Results</div>
+    <div class="card-label">Scan Results</div>
+
+    <!-- Summary stats -->
     <div class="stat-row">
       <div class="stat">
         <div class="stat-val" id="stat-total">0</div>
-        <div class="stat-lbl">Total Findings</div>
+        <div class="stat-lbl">Raw Findings</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val" id="stat-deduped">—</div>
+        <div class="stat-lbl">Deduplicated</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val" id="stat-anchors">—</div>
+        <div class="stat-lbl">Anchors</div>
       </div>
     </div>
+
+    <!-- Priority breakdown (shown only when prioritization completed) -->
+    <div class="prio-grid" id="prio-grid" style="display:none">
+      <div class="prio-cell critical">
+        <div class="prio-val" id="pc-critical">0</div>
+        <div class="prio-lbl">Critical</div>
+      </div>
+      <div class="prio-cell high">
+        <div class="prio-val" id="pc-high">0</div>
+        <div class="prio-lbl">High</div>
+      </div>
+      <div class="prio-cell medium">
+        <div class="prio-val" id="pc-medium">0</div>
+        <div class="prio-lbl">Medium</div>
+      </div>
+      <div class="prio-cell low">
+        <div class="prio-val" id="pc-low">0</div>
+        <div class="prio-lbl">Low</div>
+      </div>
+      <div class="prio-cell info">
+        <div class="prio-val" id="pc-info">0</div>
+        <div class="prio-lbl">Info</div>
+      </div>
+    </div>
+
+    <!-- Download buttons -->
     <div class="btn-row">
-      <button class="btn btn-success" onclick="downloadResults()">↓ &nbsp;Download Results (JSON)</button>
+      <button class="btn btn-success" onclick="dl('prioritized')">↓ &nbsp;Prioritized JSON</button>
+      <button class="btn btn-ghost"   onclick="dl('enriched')">↓ &nbsp;Enriched JSONL</button>
+    </div>
+    <div class="btn-row" style="margin-top:0.5rem">
+      <button class="btn btn-ghost"   onclick="dl('normalized')">↓ &nbsp;Normalized JSONL</button>
       <button class="btn btn-ghost"   onclick="newScan()">↺ &nbsp;New Scan</button>
     </div>
   </div>
@@ -317,16 +385,19 @@
 </div>
 
 <script>
-  // Step definitions
+  // Step definitions — must match step IDs emitted by server.py
   const STEPS = [
-    { id: 'subfinder',   label: 'Subdomain Enumeration',        tool: 'subfinder'   },
-    { id: 'httpx',       label: 'HTTP Probing & Tech Detection', tool: 'httpx'       },
-    { id: 'nmap',        label: 'Port & Service Discovery',      tool: 'nmap'        },
-    { id: 'feroxbuster', label: 'Directory Discovery',           tool: 'feroxbuster' },
-    { id: 'katana',      label: 'URL Crawling',                  tool: 'katana'      },
-    { id: 'wpscan',      label: 'WordPress Scanning',            tool: 'wpscan'      },
-    { id: 'nuclei',      label: 'Vulnerability Scanning',        tool: 'nuclei'      },
-    { id: 'normalize',   label: 'Normalizing Findings',          tool: 'internal'    },
+    { id: 'subfinder',        label: 'Subdomain Enumeration',        tool: 'subfinder'    },
+    { id: 'httpx',            label: 'HTTP Probing & Tech Detection', tool: 'httpx'        },
+    { id: 'app_version_probe',label: 'App Version Detection',         tool: 'internal'     },
+    { id: 'nmap',             label: 'Port & Service Discovery',      tool: 'nmap'         },
+    { id: 'feroxbuster',      label: 'Directory Discovery',           tool: 'feroxbuster'  },
+    { id: 'katana',           label: 'URL Crawling',                  tool: 'katana'       },
+    { id: 'wpscan',           label: 'WordPress Scanning',            tool: 'wpscan'       },
+    { id: 'nuclei',           label: 'Vulnerability Scanning',        tool: 'nuclei'       },
+    { id: 'normalize',        label: 'Normalizing Findings',          tool: 'internal'     },
+    { id: 'enrichment',       label: 'CVE / EPSS Enrichment',         tool: 'NVD+EPSS+KEV' },
+    { id: 'prioritization',   label: 'Prioritization & Scoring',      tool: 'internal'     },
   ];
 
   const STATUS_ICON = { success: '✓', error: '✗', skipped: '—' };
@@ -467,7 +538,7 @@
         log('   ' + ev.message);
         break;
       case 'scan_complete':
-        onComplete(ev.total_findings);
+        onComplete(ev);
         break;
       case 'scan_error':
         log('✗  ' + ev.message, 'le-err');
@@ -476,10 +547,7 @@
         if (es) { es.close(); es = null; }
         // Show results card if partial findings were saved
         if (ev.findings != null) {
-          document.getElementById('stat-total').textContent = ev.findings.toLocaleString();
-          const rc = document.getElementById('results-card');
-          rc.style.display = 'block';
-          rc.scrollIntoView({ behavior: 'smooth' });
+          onComplete(ev);
         }
         break;
     }
@@ -495,10 +563,29 @@
   }
 
   // Scan complete
-  function onComplete(total) {
+  function onComplete(ev) {
     stopGlobalTimer();
     log('✓  Scan complete!', 'le-ok');
-    document.getElementById('stat-total').textContent = total.toLocaleString();
+
+    document.getElementById('stat-total').textContent =
+      (ev.total_findings || 0).toLocaleString();
+
+    if (ev.total_deduplicated != null)
+      document.getElementById('stat-deduped').textContent =
+        ev.total_deduplicated.toLocaleString();
+
+    if (ev.anchor_count != null)
+      document.getElementById('stat-anchors').textContent =
+        ev.anchor_count.toLocaleString();
+
+    if (ev.priority_counts) {
+      const pc = ev.priority_counts;
+      ['critical','high','medium','low','info'].forEach(p => {
+        document.getElementById('pc-' + p).textContent = (pc[p] || 0).toLocaleString();
+      });
+      document.getElementById('prio-grid').style.display = '';
+    }
+
     const rc = document.getElementById('results-card');
     rc.style.display = 'block';
     rc.scrollIntoView({ behavior: 'smooth' });
@@ -565,8 +652,8 @@
     resetBtn();
   }
 
-  function downloadResults() {
-    window.location.href = '/download';
+  function dl(type) {
+    window.location.href = '/download?file=' + type;
   }
 
   // Init

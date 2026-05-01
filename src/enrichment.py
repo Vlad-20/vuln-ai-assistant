@@ -2,7 +2,15 @@
 enrichment.py — CVE/EPSS/KEV enrichment for normalized pipeline findings.
 
 Pipeline: extract_fingerprints → fingerprint_to_cpe → query_nvd →
-          query_epss (batched) → load_kev_catalog → EnrichmentFinding records
+          query_epss (batched) → load_kev_catalog → enrichment JSONL records
+
+Public API:
+  enrich_to_jsonl(input_path, output_path) -> int
+      Reads normalized_findings.jsonl, appends enrichment records (one per CVE),
+      writes enriched_findings.jsonl.  Returns count of new records added.
+
+  enrich(findings) -> list[EnrichmentFinding]
+      Legacy in-memory path kept for backward compatibility.
 """
 
 import hashlib
@@ -13,6 +21,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Optional
 from urllib.parse import quote as url_quote, urlparse
 
@@ -42,9 +51,12 @@ for _d in (_NVD_CACHE, _EPSS_CACHE, _KEV_CACHE):
 class Fingerprint:
     product: str          # normalised lowercase, underscores (e.g. "juice_shop")
     version: str          # raw version string; '' if unknown
-    source_tool: str      # "httpx" | "nmap" | "nuclei" | "wpscan" | "app_version_probe"
+    source_tool: str      # primary contributing tool
     source_id: str        # tool-specific identifier (URL, template_id, …)
     matched_version: str  # the raw string that was parsed to get version
+    host: str = ''        # host from source finding (for enrichment records)
+    url: str = ''         # url from source finding (for enrichment records)
+    source_tools: list = field(default_factory=list)  # all tools that contributed this fp
 
 
 @dataclass
@@ -55,19 +67,20 @@ class EnrichmentErrorFinding:
 
 @dataclass
 class EnrichmentFinding:
+    """Legacy dataclass kept for backward compatibility with the old enrich() API."""
     tool: str = "enrichment"
-    source_finding: str = ''       # "{source_tool}:{source_id}"
+    source_finding: str = ''
     product: str = ''
     version: str = ''
     matched_version: str = ''
     cpe: str = ''
     cve_id: str = ''
     cvss_score: Optional[float] = None
-    cvss_severity: str = 'none'    # critical|high|medium|low|none
+    cvss_severity: str = 'none'
     epss_score: Optional[float] = None
     epss_percentile: Optional[float] = None
     in_kev: bool = False
-    published: str = ''            # ISO date string
+    published: str = ''
     description: str = ''
     references: list = field(default_factory=list)
 
@@ -82,12 +95,12 @@ _KEV_URL  = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vuln
 
 _CACHE_TTL_SECS = 86_400  # 24 hours
 
-# NVD rate limits: 5 req/30 s (no key), 50 req/30 s (with key)
 _NVD_API_KEY = os.getenv('NVD_API_KEY', '')
 _NVD_DELAY   = 6.5 if not _NVD_API_KEY else 0.7   # conservative inter-request gap
 
-# Hardcoded CPE prefix map for known apps: product → (vendor, cpe_product)
-# Version is appended at call time. Avoids fuzzy NVD CPE-match API calls.
+_NVD_KEY_WARNING_DONE = False   # emit the "no API key" warning only once per process
+
+# Hardcoded CPE prefix map: product → (vendor, cpe_product)
 _CPE_MAP: dict[str, tuple[str, str]] = {
     'juice_shop':  ('owasp',     'juice_shop'),
     'wordpress':   ('wordpress', 'wordpress'),
@@ -123,6 +136,13 @@ _REF_PRIORITY = ('nvd.nist.gov', 'cisa.gov', 'mitre.org', 'exploit-db.com')
 
 def _log(msg: str):
     print(f'[ENRICHMENT] {msg}')
+
+
+def _warn_no_api_key():
+    global _NVD_KEY_WARNING_DONE
+    if not _NVD_API_KEY and not _NVD_KEY_WARNING_DONE:
+        _log('No NVD_API_KEY env var set — NVD queries limited to ~5 req/30s (slower scans)')
+        _NVD_KEY_WARNING_DONE = True
 
 
 def _cache_path(cache_dir: str, key: str, suffix: str = '.json') -> str:
@@ -162,7 +182,7 @@ def _cvss_severity(score: Optional[float]) -> str:
     return 'none'
 
 
-def _prioritise_refs(refs: list[str], limit: int = 3) -> list[str]:
+def _prioritise_refs(refs: list[str], limit: int = 5) -> list[str]:
     """Sort references by source priority, return top `limit`."""
     def _rank(url: str) -> int:
         for i, domain in enumerate(_REF_PRIORITY):
@@ -194,16 +214,26 @@ def _parse_tech_version(tech: str) -> tuple[str, str]:
 def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
     """
     Walk normalised findings dicts and extract (product, version) fingerprints.
-    Returns a deduplicated list ordered by confidence (versioned first).
+
+    Deduplicates on (product, version): when multiple source tools identify the
+    same product+version, their names are accumulated in fp.source_tools.
+    Returns a list ordered by confidence (versioned fingerprints first).
     """
-    seen: set[tuple[str, str]] = set()
+    seen: dict[tuple[str, str], Fingerprint] = {}
     fps: list[Fingerprint] = []
 
     def _add(fp: Fingerprint):
         key = (fp.product, fp.version)
-        if key not in seen and fp.product:
-            seen.add(key)
+        if not fp.product:
+            return
+        if key not in seen:
+            fp.source_tools = [fp.source_tool]
+            seen[key] = fp
             fps.append(fp)
+        else:
+            existing = seen[key]
+            if fp.source_tool not in existing.source_tools:
+                existing.source_tools.append(fp.source_tool)
 
     for f in findings:
         tool = f.get('tool', '')
@@ -220,6 +250,8 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
                     source_tool='httpx',
                     source_id=f.get('url', ''),
                     matched_version=tech,
+                    host='',
+                    url=f.get('url', ''),
                 ))
             # webserver field (may carry "Apache/2.4.51" style)
             ws = f.get('webserver', '')
@@ -232,6 +264,8 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
                         source_tool='httpx',
                         source_id=f.get('url', ''),
                         matched_version=ws,
+                        host='',
+                        url=f.get('url', ''),
                     ))
 
         # --- nmap: product + version fields ---
@@ -245,6 +279,8 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
                     source_tool='nmap',
                     source_id=f'{f.get("host", "")}:{f.get("port", "")}',
                     matched_version=f'{f.get("product", "")} {version}'.strip(),
+                    host=f.get('host', ''),
+                    url='',
                 ))
 
         # --- nuclei: detect/version templates with extracted_results ---
@@ -254,7 +290,6 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
                 continue
             extracted = f.get('extracted_results', [])
             version = extracted[0].strip() if extracted else ''
-            # Derive product from template_id: strip suffix patterns
             product_raw = tid
             for pat in _NUCLEI_VERSION_PATTERNS:
                 product_raw = product_raw.replace(pat, '')
@@ -266,6 +301,8 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
                     source_tool='nuclei',
                     source_id=tid,
                     matched_version=version or tid,
+                    host=f.get('host', ''),
+                    url=f.get('matched_at', ''),
                 ))
 
         # --- wpscan: use the version field added to WpscanFinding ---
@@ -278,6 +315,8 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
                     source_tool='wpscan',
                     source_id=f.get('host', ''),
                     matched_version=version,
+                    host=f.get('host', ''),
+                    url=f.get('host', ''),
                 ))
 
         # --- app_version_probe: already structured ---
@@ -285,12 +324,15 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
             product = _normalise_product(f.get('product', ''))
             version = (f.get('version') or '').strip()
             if product:
+                url_val = f.get('url', '') or f.get('endpoint', '')
                 _add(Fingerprint(
                     product=product,
                     version=version,
                     source_tool='app_version_probe',
-                    source_id=f.get('host', ''),
+                    source_id=url_val,
                     matched_version=version,
+                    host='',
+                    url=url_val,
                 ))
 
     # Versioned fingerprints first — they produce more precise CPEs
@@ -305,15 +347,10 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
 # ---------------------------------------------------------------------------
 
 _APP_VERSION_PROBES = [
-    # (path, product, version_extractor_fn, parse_mode)
-    # parse_mode: 'json' — extractor receives parsed dict
-    #             'text' — extractor receives raw response string
     ('/rest/admin/application-version',
      'juice_shop',
      lambda data: data.get('version', ''),
      'json'),
-    # /wp-json/wp/v2 returns 404 without pretty permalinks.
-    # /?feed=rss2 always works and contains the generator tag with the WP version.
     ('/?feed=rss2',
      'wordpress',
      lambda raw: next((m.group(1) for m in [re.search(r'wordpress\.org/\?v=([0-9.]+)', raw)] if m), ''),
@@ -322,10 +359,6 @@ _APP_VERSION_PROBES = [
 
 
 def _docker_get_json(endpoint: str, network: str, timeout: int) -> tuple[str, dict] | tuple[None, None]:
-    """
-    Fetch `endpoint` via `docker run --network {network} curlimages/curl`.
-    Returns (raw_text, parsed_dict) on success, (None, None) on any failure.
-    """
     try:
         result = subprocess.run(
             ['docker', 'run', '--rm', '--network', network,
@@ -352,10 +385,6 @@ def _docker_get_json(endpoint: str, network: str, timeout: int) -> tuple[str, di
 
 
 def _docker_get_text(endpoint: str, network: str, timeout: int) -> str | None:
-    """
-    Fetch `endpoint` via docker/curl and return the raw response text.
-    Returns None on failure or empty response.
-    """
     try:
         result = subprocess.run(
             ['docker', 'run', '--rm', '--network', network,
@@ -382,11 +411,7 @@ def probe_app_versions(base_urls: list[str],
                        network: str = 'scan-net',
                        timeout: int = 10) -> list[AppVersionProbeFinding]:
     """
-    Hit known app-version endpoints on each live URL.
-    Normalises each URL to scheme://host:port before appending probe paths,
-    so path components from live_urls are never duplicated.
-    Requests are made via `docker run --network {network}` so Docker-internal
-    hostnames (e.g. juice-shop) resolve correctly.
+    Hit known app-version endpoints on each live URL via Docker networking.
     Skips probes whose product is already in existing_fps.
     Returns AppVersionProbeFinding dataclass instances.
     """
@@ -396,7 +421,7 @@ def probe_app_versions(base_urls: list[str],
 
     for raw_url in base_urls:
         parsed = urlparse(raw_url)
-        base = f'{parsed.scheme}://{parsed.netloc}'  # strip any path component
+        base = f'{parsed.scheme}://{parsed.netloc}'
         if base in seen_bases:
             continue
         seen_bases.add(base)
@@ -454,11 +479,7 @@ def probe_app_versions(base_urls: list[str],
 # ---------------------------------------------------------------------------
 
 def fingerprint_to_cpe(fp: Fingerprint) -> Optional[str]:
-    """
-    Return a CPE 2.3 string for the fingerprint, or None if no confident mapping.
-    Uses the hardcoded _CPE_MAP; does not call the NVD CPE-match API to avoid
-    extra rate-limit pressure during development.
-    """
+    """Return a CPE 2.3 string for the fingerprint, or None if no confident mapping."""
     key = fp.product.lower()
     if key not in _CPE_MAP:
         _log(f'No CPE mapping for "{fp.product}" — skipping')
@@ -474,8 +495,10 @@ def fingerprint_to_cpe(fp: Fingerprint) -> Optional[str]:
 
 def query_nvd(cpe: str) -> list[dict]:
     """
-    Query NVD CVEs v2 API for `cpe`. Returns list of raw CVE dicts with
-    keys: cve_id, cvss_score, cvss_severity, published, description, references.
+    Query NVD CVEs v2 API for `cpe`.
+    Returns list of CVE dicts with keys:
+      cve_id, cvss_score, cvss_version, cvss_vector, cvss_severity,
+      published, description, references.
     Caches results for 24 h. Implements exponential backoff on 429/403.
     """
     cache_file = _cache_path(_NVD_CACHE, cpe)
@@ -521,33 +544,44 @@ def query_nvd(cpe: str) -> list[dict]:
         cve_block = item.get('cve', {})
         cve_id = cve_block.get('id', '')
 
-        # CVSS v3 preferred, fall back to v2
+        # CVSS: prefer v3.1, fall back to v3.0, then v2
         metrics = cve_block.get('metrics', {})
         cvss_score = None
+        cvss_version = ''
+        cvss_vector = ''
+        _VERSION_KEY_MAP = {
+            'cvssMetricV31': '3.1',
+            'cvssMetricV30': '3.0',
+            'cvssMetricV2':  '2.0',
+        }
         for key in ('cvssMetricV31', 'cvssMetricV30', 'cvssMetricV2'):
             entries = metrics.get(key)
             if entries:
                 cvss_data = entries[0].get('cvssData', {})
-                cvss_score = cvss_data.get('baseScore')
+                cvss_score  = cvss_data.get('baseScore')
+                cvss_vector = cvss_data.get('vectorString', '')
+                cvss_version = _VERSION_KEY_MAP.get(key, '')
                 break
 
-        # Description (English preferred)
+        # Description (English preferred), truncated to 500 chars
         desc = ''
         for d in cve_block.get('descriptions', []):
             if d.get('lang') == 'en':
                 desc = d.get('value', '')
                 break
-        desc = desc[:300]
+        desc = desc[:500]
 
         # References with priority sort
         all_refs = [r.get('url', '') for r in cve_block.get('references', []) if r.get('url')]
-        refs = _prioritise_refs(all_refs, limit=3)
+        refs = _prioritise_refs(all_refs, limit=5)
 
         published = cve_block.get('published', '')[:10]  # ISO date only
 
         cves.append({
             'cve_id':        cve_id,
             'cvss_score':    cvss_score,
+            'cvss_version':  cvss_version,
+            'cvss_vector':   cvss_vector,
             'cvss_severity': _cvss_severity(cvss_score),
             'published':     published,
             'description':   desc,
@@ -556,7 +590,7 @@ def query_nvd(cpe: str) -> list[dict]:
 
     _log(f'NVD: {len(cves)} CVE(s) for {cpe}')
     _write_cache(cache_file, cves)
-    time.sleep(_NVD_DELAY)   # respect rate limit between calls
+    time.sleep(_NVD_DELAY)
     return cves
 
 
@@ -568,7 +602,7 @@ def query_epss(cve_ids: list[str]) -> dict[str, dict]:
     """
     Batch-query FIRST.org EPSS API (up to 100 CVEs per request).
     Returns {cve_id: {'score': float, 'percentile': float}}.
-    Caches per calendar date (EPSS updates daily).
+    Caches per calendar date.
     """
     today = date.today().isoformat()
     cache_file = os.path.join(_EPSS_CACHE, f'{today}.json')
@@ -582,7 +616,6 @@ def query_epss(cve_ids: list[str]) -> dict[str, dict]:
         _log(f'EPSS cache hit for all {len(cve_ids)} CVE(s)')
         return {c: cached[c] for c in cve_ids if c in cached}
 
-    # Batch in chunks of 100
     results = dict(cached)
     for i in range(0, len(missing), 100):
         chunk = missing[i:i + 100]
@@ -612,16 +645,16 @@ def query_epss(cve_ids: list[str]) -> dict[str, dict]:
 # 3f. CISA KEV catalog
 # ---------------------------------------------------------------------------
 
-def load_kev_catalog() -> set[str]:
+def load_kev_catalog() -> dict[str, str]:
     """
     Download CISA KEV catalog (cached 24 h).
-    Returns set of CVE IDs in the catalog.
+    Returns {cve_id: date_added} for every CVE in the catalog.
     """
     cache_file = os.path.join(_KEV_CACHE, 'kev.json')
     if _cache_valid(cache_file):
         _log('KEV cache hit')
         data = _read_cache(cache_file)
-        return set(v['cveID'] for v in data.get('vulnerabilities', []))
+        return {v['cveID']: v.get('dateAdded', '') for v in data.get('vulnerabilities', [])}
 
     _log('Downloading CISA KEV catalog …')
     try:
@@ -629,51 +662,51 @@ def load_kev_catalog() -> set[str]:
         resp.raise_for_status()
         data = resp.json()
         _write_cache(cache_file, data)
-        kev_ids = set(v['cveID'] for v in data.get('vulnerabilities', []))
-        _log(f'KEV: {len(kev_ids)} entries loaded')
-        return kev_ids
+        kev = {v['cveID']: v.get('dateAdded', '') for v in data.get('vulnerabilities', [])}
+        _log(f'KEV: {len(kev)} entries loaded')
+        return kev
     except Exception as exc:
         _log(f'KEV download failed: {exc}')
-        return set()
+        return {}
 
 
 # ---------------------------------------------------------------------------
-# 3g. Orchestrator
+# 3g. Build enrichment dicts (new schema for JSONL output)
 # ---------------------------------------------------------------------------
 
-def enrich(findings: list[dict]) -> list[EnrichmentFinding]:
+def _build_enrichment_records(findings: list[dict]) -> list[dict]:
     """
-    Full enrichment pipeline over a list of normalised finding dicts.
-    Returns EnrichmentFinding records (one per CVE per fingerprint).
-    API failures for any single fingerprint are logged and skipped — the
-    pipeline does not crash.
+    Core enrichment logic.  Extracts fingerprints, queries NVD/EPSS/KEV,
+    and returns a list of enrichment record dicts — one per CVE per fingerprint.
+
+    Each record carries the fields expected by the prioritizer's CVE rule branch
+    (cve_id, cvss, epss, kev, …).  Empty/None fields are omitted.
     """
+    _warn_no_api_key()
+
     fingerprints = extract_fingerprints(findings)
     if not fingerprints:
         _log('No fingerprints extracted — nothing to enrich')
         return []
 
-    # Load KEV once for the whole run
     try:
         kev = load_kev_catalog()
     except Exception as exc:
         _log(f'KEV load failed, continuing without KEV data: {exc}')
-        kev = set()
+        kev = {}
 
-    all_cve_records: list[tuple[Fingerprint, str, dict]] = []  # (fp, cpe, cve_dict)
+    all_cve_records: list[tuple[Fingerprint, str, dict]] = []
 
     for fp in fingerprints:
         cpe = fingerprint_to_cpe(fp)
         if not cpe:
             continue
-
         _log(f'Querying NVD: {cpe}')
         try:
             cves = query_nvd(cpe)
         except Exception as exc:
             _log(f'NVD query failed for {cpe}: {exc} — skipping')
             continue
-
         for cve in cves:
             all_cve_records.append((fp, cpe, cve))
 
@@ -681,7 +714,159 @@ def enrich(findings: list[dict]) -> list[EnrichmentFinding]:
         _log('NVD returned no CVEs for any fingerprint')
         return []
 
-    # Batch EPSS for all CVE IDs at once
+    all_cve_ids = list({rec[2]['cve_id'] for rec in all_cve_records})
+    try:
+        epss_map = query_epss(all_cve_ids)
+    except Exception as exc:
+        _log(f'EPSS batch failed: {exc} — continuing without EPSS scores')
+        epss_map = {}
+
+    records: list[dict] = []
+    for fp, cpe, cve in all_cve_records:
+        cve_id = cve['cve_id']
+        epss   = epss_map.get(cve_id, {})
+
+        rec: dict = {
+            'tool':               'enrichment',
+            'product':            fp.product,
+            'version':            fp.version,
+            'source_fingerprint': f'{fp.product}:{fp.version}',
+            'source_tools':       list(fp.source_tools),
+            'cve_id':             cve_id,
+        }
+
+        # host / url — omit if empty
+        if fp.host:
+            rec['host'] = fp.host
+        if fp.url:
+            rec['url'] = fp.url
+
+        # CVSS fields — omit absent values
+        if cve.get('cvss_score') is not None:
+            rec['cvss'] = cve['cvss_score']
+        if cve.get('cvss_version'):
+            rec['cvss_version'] = cve['cvss_version']
+        if cve.get('cvss_vector'):
+            rec['cvss_vector'] = cve['cvss_vector']
+
+        # EPSS
+        if epss.get('score') is not None:
+            rec['epss'] = epss['score']
+        if epss.get('percentile') is not None:
+            rec['epss_percentile'] = epss['percentile']
+
+        # KEV
+        rec['kev'] = cve_id in kev
+        if rec['kev'] and kev.get(cve_id):
+            rec['kev_date_added'] = kev[cve_id]
+
+        # CVE metadata
+        if cve.get('published'):
+            rec['cve_published'] = cve['published']
+        desc = (cve.get('description') or '')[:500]
+        if desc:
+            rec['cve_description'] = desc
+        refs = cve.get('references') or []
+        if refs:
+            rec['cve_references'] = refs
+
+        records.append(rec)
+
+    # Sort: highest EPSS then CVSS first
+    records.sort(key=lambda r: (-(r.get('epss', 0) or 0), -(r.get('cvss', 0) or 0)))
+
+    _log(f'Built {len(records)} enrichment record(s) from '
+         f'{len(fingerprints)} fingerprint(s)')
+    return records
+
+
+# ---------------------------------------------------------------------------
+# 3h. Public pipeline API — enrich_to_jsonl
+# ---------------------------------------------------------------------------
+
+def enrich_to_jsonl(input_path: Path, output_path: Path) -> int:
+    """
+    Read *normalized_findings.jsonl* at `input_path`, run the full enrichment
+    pipeline, and write *enriched_findings.jsonl* at `output_path`.
+
+    The output file contains:
+      • Every record from the input file (unchanged)
+      • One new ``tool="enrichment"`` record per CVE discovered
+
+    Returns the count of new enrichment records added.
+    Raises only for I/O errors; NVD/EPSS/KEV failures are logged and skipped.
+    """
+    findings: list[dict] = []
+    with open(input_path, 'r', encoding='utf-8', errors='replace') as fh:
+        for lineno, line in enumerate(fh, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                findings.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                _log(f'Line {lineno}: invalid JSON — skipping ({exc})')
+
+    _log(f'Read {len(findings)} finding(s) from {input_path}')
+
+    try:
+        new_records = _build_enrichment_records(findings)
+    except Exception as exc:
+        _log(f'Enrichment pipeline error: {exc} — writing original findings only')
+        new_records = []
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, 'w', encoding='utf-8') as fh:
+        for f in findings:
+            fh.write(json.dumps(f, ensure_ascii=False) + '\n')
+        for r in new_records:
+            fh.write(json.dumps(r, ensure_ascii=False) + '\n')
+
+    _log(f'Wrote {len(findings)} original + {len(new_records)} enrichment '
+         f'record(s) → {output_path}')
+    return len(new_records)
+
+
+# ---------------------------------------------------------------------------
+# 3i. Legacy in-memory orchestrator (backward compat)
+# ---------------------------------------------------------------------------
+
+def enrich(findings: list[dict]) -> list[EnrichmentFinding]:
+    """
+    Legacy API: full enrichment pipeline over a list of normalised finding dicts.
+    Returns EnrichmentFinding dataclass records (one per CVE per fingerprint).
+    Prefer enrich_to_jsonl() for new code.
+    """
+    fingerprints = extract_fingerprints(findings)
+    if not fingerprints:
+        _log('No fingerprints extracted — nothing to enrich')
+        return []
+
+    try:
+        kev = load_kev_catalog()
+    except Exception as exc:
+        _log(f'KEV load failed, continuing without KEV data: {exc}')
+        kev = {}
+
+    all_cve_records: list[tuple[Fingerprint, str, dict]] = []
+
+    for fp in fingerprints:
+        cpe = fingerprint_to_cpe(fp)
+        if not cpe:
+            continue
+        _log(f'Querying NVD: {cpe}')
+        try:
+            cves = query_nvd(cpe)
+        except Exception as exc:
+            _log(f'NVD query failed for {cpe}: {exc} — skipping')
+            continue
+        for cve in cves:
+            all_cve_records.append((fp, cpe, cve))
+
+    if not all_cve_records:
+        _log('NVD returned no CVEs for any fingerprint')
+        return []
+
     all_cve_ids = list({rec[2]['cve_id'] for rec in all_cve_records})
     try:
         epss_map = query_epss(all_cve_ids)
@@ -710,10 +895,7 @@ def enrich(findings: list[dict]) -> list[EnrichmentFinding]:
             references=cve['references'],
         ))
 
-    enriched.sort(key=lambda e: (
-        -(e.epss_score or 0),
-        -(e.cvss_score or 0),
-    ))
+    enriched.sort(key=lambda e: (-(e.epss_score or 0), -(e.cvss_score or 0)))
 
     _log(f'Enrichment complete: {len(enriched)} finding(s) from '
          f'{len(fingerprints)} fingerprint(s)')
