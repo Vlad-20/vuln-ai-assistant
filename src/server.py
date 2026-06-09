@@ -389,5 +389,5 @@ def _normalize_and_finish(collected: dict, stopped: bool):
 
 
 if __name__ == '__main__':
-    print("VulnAI Scanner UI  ->  http://localhost:5000")
+    print("Vuln Scanner UI  ->  http://localhost:5000")
     app.run(host='0.0.0.0', port=5000, threaded=True, debug=False)
