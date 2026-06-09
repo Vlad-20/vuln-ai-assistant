@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>VulnAI Scanner</title>
+  <title>Vuln Scanner</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -338,6 +338,10 @@
         <div class="stat-lbl">Raw Findings</div>
       </div>
       <div class="stat">
+        <div class="stat-val" id="stat-enriched">—</div>
+        <div class="stat-lbl">Enriched</div>
+      </div>
+      <div class="stat">
         <div class="stat-val" id="stat-deduped">—</div>
         <div class="stat-lbl">Deduplicated</div>
       </div>
@@ -569,6 +573,10 @@
 
     document.getElementById('stat-total').textContent =
       (ev.total_findings || 0).toLocaleString();
+
+    if (ev.total_enriched != null)
+      document.getElementById('stat-enriched').textContent =
+        ev.total_enriched.toLocaleString();
 
     if (ev.total_deduplicated != null)
       document.getElementById('stat-deduped').textContent =

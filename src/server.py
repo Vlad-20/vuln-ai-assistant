@@ -346,6 +346,7 @@ def _normalize_and_finish(collected: dict, stopped: bool):
             pdata = json.load(fh)
         meta           = pdata.get('metadata', {})
         priority_counts = meta.get('priority_counts', {})
+        total_enriched = meta.get('total_findings_raw', 0)
         total_deduped  = meta.get('total_findings_deduplicated', 0)
         anchor_count   = len(pdata.get('anchors', []))
 
@@ -360,6 +361,7 @@ def _normalize_and_finish(collected: dict, stopped: bool):
                 'message': f'Scan stopped early. {len(all_findings_objs)} findings saved.',
                 'findings': len(all_findings_objs),
                 'priority_counts':    priority_counts,
+                'total_enriched':     total_enriched,
                 'total_deduplicated': total_deduped,
                 'anchor_count':       anchor_count,
             })
@@ -368,6 +370,7 @@ def _normalize_and_finish(collected: dict, stopped: bool):
                 'type':               'scan_complete',
                 'total_findings':     len(all_findings_objs),
                 'priority_counts':    priority_counts,
+                'total_enriched':     total_enriched,
                 'total_deduplicated': total_deduped,
                 'anchor_count':       anchor_count,
             })
