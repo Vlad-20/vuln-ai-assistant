@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import queue
@@ -11,12 +12,26 @@ from flask import stream_with_context
 
 # Pipeline modules print Unicode (e.g. '→') to stdout. On a Windows console using a
 # non-UTF-8 code page (cp1252) that raises UnicodeEncodeError mid-pipeline — which made
-# enrichment appear to fail and silently dropped CVE/EPSS/KEV data. Force UTF-8 output.
-for _stream in (sys.stdout, sys.stderr):
+# enrichment appear to fail and silently dropped CVE/EPSS/KEV data. Force UTF-8 output,
+# tolerating any console that can't be reconfigured (errors='backslashreplace' guarantees
+# a print can never raise on an un-encodable character).
+def _force_utf8_stream(stream):
     try:
-        _stream.reconfigure(encoding='utf-8')
+        stream.reconfigure(encoding='utf-8', errors='backslashreplace')
+        return stream
     except (AttributeError, ValueError):
         pass
+    buffer = getattr(stream, 'buffer', None)
+    if buffer is not None:
+        try:
+            return io.TextIOWrapper(buffer, encoding='utf-8',
+                                    errors='backslashreplace', line_buffering=True)
+        except Exception:
+            pass
+    return stream
+
+sys.stdout = _force_utf8_stream(sys.stdout)
+sys.stderr = _force_utf8_stream(sys.stderr)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import enrichment
@@ -414,5 +429,6 @@ def _normalize_and_finish(collected: dict, stopped: bool):
 
 
 if __name__ == '__main__':
-    print("Vuln Scanner UI  ->  http://localhost:5000")
+    print(f"Vuln Scanner UI  ->  http://localhost:5000   [stdout encoding: "
+          f"{getattr(sys.stdout, 'encoding', '?')}]")
     app.run(host='0.0.0.0', port=5000, threaded=True, debug=False)
