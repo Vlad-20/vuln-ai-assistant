@@ -375,6 +375,16 @@
       </div>
     </div>
 
+    <!-- Report download (headline deliverable) -->
+    <div class="btn-row" id="report-row" style="display:none; margin-bottom:0.6rem">
+      <button class="btn btn-primary" onclick="dl('report')">📄 &nbsp;Download Report (PDF)</button>
+      <button class="btn btn-ghost"   onclick="dl('report_md')" style="flex:0 0 auto">↓ &nbsp;Markdown</button>
+    </div>
+    <div id="report-unavailable"
+         style="display:none; color:var(--muted); font-size:0.8rem; margin-bottom:0.7rem">
+      ⚠ Report not generated — see the Report Generation step above for the error.
+    </div>
+
     <!-- Download buttons -->
     <div class="btn-row">
       <button class="btn btn-success" onclick="dl('prioritized')">↓ &nbsp;Prioritized JSON</button>
@@ -402,6 +412,7 @@
     { id: 'normalize',        label: 'Normalizing Findings',          tool: 'internal'     },
     { id: 'enrichment',       label: 'CVE / EPSS Enrichment',         tool: 'NVD+EPSS+KEV' },
     { id: 'prioritization',   label: 'Prioritization & Scoring',      tool: 'internal'     },
+    { id: 'report',           label: 'Report Generation',             tool: 'gemini-3.5-flash' },
   ];
 
   const STATUS_ICON = { success: '✓', error: '✗', skipped: '—' };
@@ -411,6 +422,7 @@
   let globalTimerIv = null;
   let globalStart   = null;
   let es            = null;
+  let reportReady   = false;  // set true when the report step_end reports success
 
   // Build step cards
   function buildSteps() {
@@ -433,6 +445,7 @@
   function resetSteps() {
     Object.values(stepTimers).forEach(t => clearInterval(t.iv));
     stepTimers = {};
+    reportReady = false;
     stopGlobalTimer();
 
     STEPS.forEach((s, i) => {
@@ -535,6 +548,7 @@
         break;
       case 'step_end':
         setDone(ev.step_id, ev.status, ev.message);
+        if (ev.step_id === 'report') reportReady = (ev.status === 'success');
         if (ev.message) log('   ' + ev.message,
           ev.status === 'error' ? 'le-err' : ev.status === 'success' ? 'le-ok' : 'le-info');
         break;
@@ -593,6 +607,10 @@
       });
       document.getElementById('prio-grid').style.display = '';
     }
+
+    // Show report download only if the report step succeeded; otherwise explain why.
+    document.getElementById('report-row').style.display = reportReady ? '' : 'none';
+    document.getElementById('report-unavailable').style.display = reportReady ? 'none' : '';
 
     const rc = document.getElementById('results-card');
     rc.style.display = 'block';

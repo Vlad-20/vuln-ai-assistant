@@ -9,12 +9,25 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory
 from flask import stream_with_context
 
+# Pipeline modules print Unicode (e.g. '→') to stdout. On a Windows console using a
+# non-UTF-8 code page (cp1252) that raises UnicodeEncodeError mid-pipeline — which made
+# enrichment appear to fail and silently dropped CVE/EPSS/KEV data. Force UTF-8 output.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8')
+    except (AttributeError, ValueError):
+        pass
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import enrichment
 import parsers
 import prioritizer
 import run_scans
 from target_utils import is_public_domain, normalize_target
+
+# report_generator lives in the project root (next to report_template.md / report_prompt.md).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import report_generator
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -108,6 +121,8 @@ def download():
         'enriched':    ('enriched_findings.jsonl',             'application/x-ndjson'),
         'annotated':   ('enriched_findings.annotated.jsonl',   'application/x-ndjson'),
         'prioritized': ('enriched_findings.prioritized.json',  'application/json'),
+        'report':      ('report.pdf',                          'application/pdf'),
+        'report_md':   ('report.md',                           'text/markdown'),
     }
     file_key = request.args.get('file', 'prioritized')
     if file_key not in FILE_MAP:
@@ -354,6 +369,16 @@ def _normalize_and_finish(collected: dict, stopped: bool):
         _step_end('prioritization', 'success',
                   f"C:{pc.get('critical',0)} H:{pc.get('high',0)} "
                   f"M:{pc.get('medium',0)} L:{pc.get('low',0)} I:{pc.get('info',0)}")
+
+        # ------------------------------------------------------------------
+        # Step: report generation (failure must not block the terminal event)
+        # ------------------------------------------------------------------
+        _step_start('report', 'Report Generation')
+        try:
+            report_generator.generate_report(str(prioritized_path), str(OUTPUT_DIR))
+            _step_end('report', 'success', 'PDF report generated')
+        except RuntimeError as e:
+            _step_end('report', 'error', str(e))
 
         if stopped:
             _emit({

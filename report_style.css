@@ -1,0 +1,198 @@
+/* report_style.css — print stylesheet for the attack-surface PDF report.
+   Targets HTML produced by python-markdown (tables extension) + WeasyPrint. */
+
+/* --------------------------------------------------------------------- */
+/* Page setup + per-page footer                                          */
+/* --------------------------------------------------------------------- */
+@page {
+  size: A4;
+  margin: 2.2cm 1.8cm 2cm 1.8cm;
+
+  @bottom-left {
+    content: "Attack Surface Discovery Report";
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 8pt;
+    color: #6b7280;
+  }
+  @bottom-right {
+    content: "Page " counter(page) " of " counter(pages);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 8pt;
+    color: #6b7280;
+  }
+}
+
+/* --------------------------------------------------------------------- */
+/* Base typography                                                       */
+/* --------------------------------------------------------------------- */
+html {
+  background: #ffffff;
+}
+
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: #1f2933;
+  background: #ffffff;
+  font-size: 10.5pt;
+  line-height: 1.5;
+  margin: 0;
+}
+
+p {
+  margin: 0.5em 0;
+}
+
+a {
+  color: #2563eb;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.9em;
+  background: #f3f4f6;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #b91c1c;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 1.2em 0;
+}
+
+blockquote {
+  margin: 1em 0;
+  padding: 0.5em 1em;
+  border-left: 4px solid #2563eb;
+  background: #f3f6fc;
+  color: #374151;
+}
+
+ul, ol {
+  margin: 0.5em 0;
+  padding-left: 1.4em;
+}
+
+li {
+  margin: 0.25em 0;
+}
+
+/* --------------------------------------------------------------------- */
+/* Headings — page break before each H1 except the first                 */
+/* --------------------------------------------------------------------- */
+h1 {
+  break-before: page;
+  page-break-before: always;
+  font-size: 19pt;
+  color: #111827;
+  border-bottom: 2px solid #2563eb;
+  padding-bottom: 4px;
+  margin: 0 0 0.6em 0;
+}
+
+h2 {
+  font-size: 14pt;
+  color: #1e3a8a;
+  margin: 1.2em 0 0.4em 0;
+}
+
+h3 {
+  font-size: 11.5pt;
+  color: #374151;
+  margin: 1em 0 0.3em 0;
+}
+
+/* --------------------------------------------------------------------- */
+/* Title page (leading H1 + subtitle + scan date, all centered)          */
+/* --------------------------------------------------------------------- */
+h1:first-of-type {
+  break-before: auto;
+  page-break-before: avoid;
+  text-align: center;
+  font-size: 30pt;
+  border: none;
+  color: #111827;
+  margin-top: 32vh;
+}
+
+h1:first-of-type + h2 {
+  text-align: center;
+  font-size: 16pt;
+  font-weight: 600;
+  color: #374151;
+}
+
+h1:first-of-type + h2 + p {
+  text-align: center;
+  color: #6b7280;
+  font-size: 12pt;
+}
+
+/* --------------------------------------------------------------------- */
+/* Tables                                                                */
+/* --------------------------------------------------------------------- */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  font-size: 9.5pt;
+}
+
+th, td {
+  border: 1px solid #d1d5db;
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+thead th {
+  background: #1f2937;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+tbody tr:nth-child(even) {
+  background: #f3f4f6;
+}
+
+/* Avoid splitting rows across page boundaries. */
+tr, td, th {
+  page-break-inside: avoid;
+}
+
+/* --------------------------------------------------------------------- */
+/* Severity colour coding (classes added to <td> by report_generator)    */
+/* A cell's own background paints over the zebra row background.          */
+/* --------------------------------------------------------------------- */
+.sev-critical {
+  background-color: #dc2626;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.sev-high {
+  background-color: #ea580c;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.sev-medium {
+  background-color: #facc15;
+  color: #1f2933;
+  font-weight: 700;
+}
+
+.sev-low {
+  background-color: #2563eb;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.sev-informational {
+  background-color: #9ca3af;
+  color: #1f2933;
+  font-weight: 700;
+}
