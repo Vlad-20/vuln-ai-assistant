@@ -18,6 +18,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -135,7 +136,15 @@ _REF_PRIORITY = ('nvd.nist.gov', 'cisa.gov', 'mitre.org', 'exploit-db.com')
 # ---------------------------------------------------------------------------
 
 def _log(msg: str):
-    print(f'[ENRICHMENT] {msg}')
+    line = f'[ENRICHMENT] {msg}'
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        # A non-UTF-8 console (e.g. Windows cp1252) can't encode characters like
+        # '->'/em-dash/ellipsis used in these messages. A cosmetic log line must
+        # never abort the enrichment pipeline (which would make the server discard
+        # already-written enriched output), so degrade to an ASCII-safe rendering.
+        print(line.encode('ascii', 'backslashreplace').decode('ascii'))
 
 
 def _warn_no_api_key():
