@@ -1,8 +1,8 @@
 """
-report_generator.py — Phase 2 report generation for the vuln-ai-assistant pipeline.
+report_generator.py: Phase 2 report generation for the vuln-ai-assistant pipeline.
 
 Reads the prioritized JSON produced by prioritizer.py, derives scan metadata,
-asks Claude to fill the Markdown report template, writes report.md, and renders
+asks Gemini to fill the Markdown report template, writes report.md, and renders
 report.pdf via WeasyPrint.
 
 Public API:
@@ -47,9 +47,7 @@ _SEV_CELL_RE = re.compile(
 )
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def _extract_section(text: str, heading: str) -> str:
     """Return the lines under a ``## heading`` up to (but not including) the next ``## `` heading."""
@@ -96,7 +94,7 @@ def _build_scan_metadata(data: dict) -> dict:
 
 
 def _markdown_to_pdf(report_md: str, pdf_path: Path) -> None:
-    """Render Markdown → HTML (with severity cell tagging) → styled PDF."""
+    """Render Markdown to HTML (with severity cell tagging), then to a styled PDF."""
     html_body = md.markdown(report_md, extensions=["tables", "sane_lists"])
 
     def _tag(m: re.Match) -> str:
@@ -114,9 +112,7 @@ def _markdown_to_pdf(report_md: str, pdf_path: Path) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
 # Public API
-# ---------------------------------------------------------------------------
 
 def generate_report(prioritized_path: str, output_dir: str) -> str:
     """
@@ -168,7 +164,7 @@ def generate_report(prioritized_path: str, output_dir: str) -> str:
         .replace("{{REPORT_TEMPLATE_CONTENT}}", template_content)
     )
 
-    # 4. Call Gemini (single blocking request — the SDK reads GEMINI_API_KEY from env).
+    # 4. Call Gemini (single blocking request; the SDK reads GEMINI_API_KEY from env).
     try:
         client = genai.Client()
         response = client.models.generate_content(
@@ -177,7 +173,7 @@ def generate_report(prioritized_path: str, output_dir: str) -> str:
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
                 max_output_tokens=MAX_TOKENS,
-                # Disable "thinking" — otherwise it consumes the output budget and the
+                # Disable "thinking"; otherwise it consumes the output budget and the
                 # visible report gets truncated mid-section.
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
@@ -221,9 +217,7 @@ def generate_report(prioritized_path: str, output_dir: str) -> str:
     return str(pdf_path)
 
 
-# ---------------------------------------------------------------------------
 # CLI
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")

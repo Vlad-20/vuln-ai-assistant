@@ -1,11 +1,11 @@
 """
-prioritizer.py — Phase 1 post-processor for the vuln-ai-assistant pipeline.
+prioritizer.py: Phase 1 post-processor for the vuln-ai-assistant pipeline.
 
 Reads the unified findings JSONL produced by main.py, deduplicates findings,
 scores them by priority, groups them by multiple dimensions, and writes two
 output files:
-  <stem>.annotated.jsonl  — every deduplicated finding with scoring fields
-  <stem>.prioritized.json — grouped views for the LLM report writer
+  <stem>.annotated.jsonl   every deduplicated finding with scoring fields
+  <stem>.prioritized.json  grouped views for the LLM report writer
 
 Usage:
     python prioritizer.py <normalized_findings.jsonl>
@@ -23,15 +23,13 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-# ---------------------------------------------------------------------------
-# Configuration constants — edit these to tune scoring rules
-# ---------------------------------------------------------------------------
+# Configuration constants: edit these to tune scoring rules.
 
 # Sensitive path patterns: (regex, base_severity, reason)
 # Applied to the URL *path* component only (no scheme/host/query).
-# First match wins; ordered critical → low.
+# First match wins; ordered critical to low.
 SENSITIVE_PATHS: List[Tuple[str, str, str]] = [
-    # Critical — credential / secret files
+    # Critical: credential / secret files
     (r"(^|/)\.env$",                       "critical", "environment file exposed"),
     (r"(^|/)\.git/config$",                "critical", "git config file exposed"),
     (r"(^|/)\.aws/credentials$",           "critical", "AWS credentials file exposed"),
@@ -41,7 +39,7 @@ SENSITIVE_PATHS: List[Tuple[str, str, str]] = [
     (r"(^|/)\.ssh(/|$)",                   "critical", "SSH directory exposed"),
     (r"(^|/)private\.key$",               "critical", "private key file exposed"),
     (r"\.sql$",                             "critical", "SQL dump / database backup exposed"),
-    # High — admin panels, VCS dirs, dangerous directories
+    # High: admin panels, VCS dirs, dangerous directories
     (r"(^|/)\.git(/|$)",                   "high", "git repository directory exposed"),
     (r"(^|/)admin(/|$)",                   "high", "admin panel discovered"),
     (r"(^|/)administrator(/|$)",           "high", "admin panel discovered"),
@@ -55,13 +53,13 @@ SENSITIVE_PATHS: List[Tuple[str, str, str]] = [
     (r"(^|/)server-status(/|$)",           "high", "Apache server-status page discovered"),
     (r"(^|/)ftp(/|$)",                     "high", "FTP directory exposed"),
     (r"(^|/)files(/|$)",                   "high", "files directory exposed"),
-    # Medium — debug / API documentation pages
+    # Medium: debug / API documentation pages
     (r"(^|/)phpinfo\.php$",                "medium", "phpinfo page exposed"),
     (r"(^|/)test\.php$",                   "medium", "test script exposed"),
     (r"(^|/)info\.php$",                   "medium", "PHP info page exposed"),
     (r"(^|/)(api/)?swagger(/|$)",          "medium", "Swagger/OpenAPI UI exposed"),
     (r"(^|/)api-docs(/|$)",               "medium", "API documentation exposed"),
-    # Low — informational / standard disclosure files
+    # Low: informational / standard disclosure files
     (r"(^|/)robots\.txt$",                 "low", "robots.txt found"),
     (r"(^|/)sitemap\.xml$",                "low", "sitemap.xml found"),
     (r"(^|/)\.well-known(/|$)",            "low", "well-known directory found"),
@@ -128,10 +126,7 @@ _UNUSUAL_PORTS_BY_NUMBER: Dict[int, Tuple[str, str]] = {
     8443:  ("info",   "HTTPS alternate port"),
 }
 
-# ---------------------------------------------------------------------------
 # Internal constants
-# ---------------------------------------------------------------------------
-
 _SEVERITY_ORDER = ["info", "low", "medium", "high", "critical"]
 
 _NUCLEI_SEVERITY_MAP = {
@@ -160,9 +155,7 @@ _NUCLEI_DEFAULT_CREDS_RE = re.compile(
 log = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def _drop_severity(severity: str) -> str:
     """Drop one severity level (floor at 'low')."""
@@ -217,9 +210,7 @@ def _product_slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text)
 
 
-# ---------------------------------------------------------------------------
 # Pass 1: Deduplication
-# ---------------------------------------------------------------------------
 
 def _fingerprint(finding: dict) -> Optional[tuple]:
     """Compute a deduplication fingerprint. Returns None for unrecognised records."""
@@ -254,7 +245,7 @@ def _fingerprint(finding: dict) -> Optional[tuple]:
         if tool == "app_version_probe":
             return ("app_version_probe", finding.get("url", ""), finding.get("product", ""))
         if tool == "enrichment":
-            # Unique per (CVE, host) — allows the CVE rule branch in score() to fire
+            # Unique per (CVE, host) so the CVE rule branch in score() can fire.
             return ("enrichment", finding.get("cve_id", ""), finding.get("host", ""))
     except Exception as exc:
         log.warning("Could not fingerprint finding (tool=%s): %s", tool, exc)
@@ -363,9 +354,7 @@ def dedupe(findings: List[dict]) -> List[dict]:
     return [f for i, f in enumerate(merged) if i not in to_remove]
 
 
-# ---------------------------------------------------------------------------
 # Pass 2: Priority scoring
-# ---------------------------------------------------------------------------
 
 def score(finding: dict) -> Tuple[str, str, str, bool]:
     """
@@ -377,9 +366,8 @@ def score(finding: dict) -> Tuple[str, str, str, bool]:
     """
     tool = finding.get("tool", "")
 
-    # CVE-bearing rules — currently inert (no CVE fields in pipeline output yet).
-    # When cve_id / cvss / epss / kev fields are added by the enrichment module
-    # these branches will fire automatically.
+    # CVE-bearing rules. The enrichment module adds cve_id / cvss / epss / kev
+    # fields, so these branches fire for enrichment records.
     cve_id = finding.get("cve_id")
     cvss   = finding.get("cvss")
     epss   = finding.get("epss")
@@ -533,9 +521,7 @@ def _score_wpscan(finding: dict) -> Tuple[str, str, str, bool]:
     return severity, f"WordPress finding: {name}", "tech_fingerprint", False
 
 
-# ---------------------------------------------------------------------------
 # Pass 3: Grouping
-# ---------------------------------------------------------------------------
 
 def _derive_scan_target(findings: List[dict]) -> str:
     """Best-effort: return the most common parent_domain or hostname."""
@@ -585,13 +571,11 @@ def group(findings: List[dict]) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
 # Orchestration
-# ---------------------------------------------------------------------------
 
 def prioritize(input_path: Path) -> Tuple[Path, Path]:
     """
-    Top-level orchestration: read → dedupe → score → group → write.
+    Top-level orchestration: read, dedupe, score, group, write.
 
     Returns (annotated_jsonl_path, prioritized_json_path).
     """
@@ -675,9 +659,7 @@ def prioritize(input_path: Path) -> Tuple[Path, Path]:
     return annotated_path, prioritized_path
 
 
-# ---------------------------------------------------------------------------
 # CLI
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(

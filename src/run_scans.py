@@ -32,7 +32,6 @@ def reset_stop():
     _stop_requested.clear()
 
 
-# Define output directory
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'output')
 COMPOSE_FILE = os.path.join(os.path.dirname(__file__), '..', 'docker-compose.yml')
 
@@ -57,7 +56,6 @@ NUCLEI_TIMEOUT    = 600
 # Wordlist mounted from ./wordlists on the host into the feroxbuster container
 FEROXBUSTER_WORDLIST = '/wordlists/common.txt'
 
-# WPScan API token
 WPSCAN_API_TOKEN = os.environ.get('WPSCAN_API_TOKEN', 'YVGUAfJ3rKShteQfINOPras9y4Yo0gmNaso8SWxmsng')
 
 
@@ -101,9 +99,9 @@ def _stop_service_containers(service_name: str):
 
 
 def _run(command: list, timeout: int, service_name: str = None, stdin_data: str = None):
-    """Run a subprocess, raise CalledProcessError or TimeoutExpired on failure;
-    On timeout, also stops any orphaned Docker containers for the service;
-    Pass stdin_data to pipe text into the process's stdin"""
+    """Run a subprocess, raising CalledProcessError or TimeoutExpired on failure.
+    On timeout, also stop any orphaned Docker containers for the service.
+    stdin_data, if given, is piped into the process's stdin."""
     global _current_proc
     proc = subprocess.Popen(
         command,
@@ -196,7 +194,7 @@ def _to_httpx_input(entry: str) -> str:
         p = _up(entry)
         port = p.port or (443 if p.scheme == 'https' else 80)
         return f'{p.hostname}:{port}'
-    # If no dots in the name, it's a single-label internal hostname — add port
+    # No dots means a single-label internal hostname, so add a port.
     if entry and '.' not in entry.split(':')[0]:
         host = entry.split(':')[0]
         port = entry.split(':')[1] if ':' in entry else '80'
@@ -330,12 +328,12 @@ def run_feroxbuster(url: str):
 
 def run_katana(url: str, network: str = os.getenv('KATANA_NETWORK', 'scan-net')):
     print(f"[KATANA] Starting URL crawling on {url}...")
-    # Ensure the URL has a scheme - katana requires http:// or https://
+    # Ensure the URL has a scheme; katana requires http:// or https://.
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
 
     # --network host can't resolve compose service hostnames; rewrite to host ports.
-    # On scan-net, Docker DNS handles this natively — no translation needed.
+    # On scan-net, Docker DNS handles this natively, so no translation is needed.
     if network == 'host':
         KATANA_HOST_MAP = {
             'http://dvwa':  'http://127.0.0.1:4280',
@@ -426,7 +424,7 @@ def run_katana(url: str, network: str = os.getenv('KATANA_NETWORK', 'scan-net'))
     return out_local if _is_nonempty(out_local) else None
 
 
-# 6. WPScan (conditional - only for WordPress hosts)
+# 6. WPScan (conditional, only for WordPress hosts)
 
 def run_wpscan(url: str):
     print(f"[WPSCAN] Starting WordPress scan on {url}...")

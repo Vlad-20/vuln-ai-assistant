@@ -9,11 +9,11 @@ def normalize_target(raw: str):
     url:      full URL with scheme for URL-based tools (httpx, feroxbuster, katana, nuclei, wpscan)
 
     Examples:
-      'http://dvwa'         -> ('dvwa', 'http://dvwa')
-      'dvwa'                -> ('dvwa', 'http://dvwa')
-      'example.com'         -> ('example.com', 'http://example.com')
-      'https://example.com' -> ('example.com', 'https://example.com')
-      '127.0.0.1:4280'      -> ('127.0.0.1', 'http://127.0.0.1:4280')
+      'http://dvwa'         becomes ('dvwa', 'http://dvwa')
+      'dvwa'                becomes ('dvwa', 'http://dvwa')
+      'example.com'         becomes ('example.com', 'http://example.com')
+      'https://example.com' becomes ('example.com', 'https://example.com')
+      '127.0.0.1:4280'      becomes ('127.0.0.1', 'http://127.0.0.1:4280')
     """
     raw = raw.strip()
     if not raw.startswith(('http://', 'https://')):

@@ -10,7 +10,7 @@ import prioritizer
 from target_utils import normalize_target, is_public_domain
 
 
-TEST_TARGET = "hackout.ro"
+TEST_TARGET = "vladvlaicu.com"
 OUTPUT_DIR   = Path(run_scans.OUTPUT_DIR)
 NORMALIZED   = OUTPUT_DIR / 'normalized_findings.jsonl'
 ENRICHED     = OUTPUT_DIR / 'enriched_findings.jsonl'
@@ -54,21 +54,21 @@ def main():
     # 3. Port & Service Discovery (nmap)
     nmap_file = run_scans.run_nmap(hostname)
 
-    # 4. Directory Discovery (feroxbuster) - per live host
+    # 4. Directory Discovery (feroxbuster), per live host
     feroxbuster_files = []
     for u in live_urls:
         result = run_scans.run_feroxbuster(u)
         if result:
             feroxbuster_files.append(result)
 
-    # 5. URL Collection & Crawling (katana) - per live host
+    # 5. URL Collection & Crawling (katana), per live host
     katana_files = []
     for u in live_urls:
         result = run_scans.run_katana(u)
         if result:
             katana_files.append(result)
 
-    # 6. CMS-Specific Scanning (WPScan) - WordPress hosts only
+    # 6. CMS-Specific Scanning (WPScan), WordPress hosts only
     wpscan_files = []
     if wordpress_urls:
         print(f"[PIPELINE] WordPress detected - running WPScan on {len(wordpress_urls)} host(s).")
@@ -79,12 +79,10 @@ def main():
     else:
         print("[PIPELINE] No WordPress hosts detected - skipping WPScan.")
 
-    # 7. Vulnerability Scanning (nuclei) - all live hosts
+    # 7. Vulnerability Scanning (nuclei), all live hosts
     nuclei_file = run_scans.run_nuclei(live_urls)
 
-    # -----------------------------------------------------------------------
-    # Normalize all findings → normalized_findings.jsonl
-    # -----------------------------------------------------------------------
+    # Normalize all findings into normalized_findings.jsonl
     print("\n*** Normalizing findings ***")
     all_findings = []
 
@@ -116,9 +114,7 @@ def main():
         print(f"ERROR saving normalized findings: {e}")
         sys.exit(1)
 
-    # -----------------------------------------------------------------------
-    # Enrichment → enriched_findings.jsonl
-    # -----------------------------------------------------------------------
+    # Enrichment into enriched_findings.jsonl
     print("\n*** Running CVE / EPSS / KEV enrichment ***")
     prioritizer_input = NORMALIZED
     try:
@@ -128,9 +124,7 @@ def main():
     except Exception as e:
         print(f"[ENRICHMENT] Failed: {e} — prioritizer will run on normalized findings")
 
-    # -----------------------------------------------------------------------
-    # Prioritization → annotated JSONL + prioritized JSON
-    # -----------------------------------------------------------------------
+    # Prioritization into annotated JSONL and prioritized JSON
     print("\n*** Running prioritization ***")
     try:
         annotated, prioritized = prioritizer.prioritize(prioritizer_input)

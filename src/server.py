@@ -11,7 +11,7 @@ from flask import Flask, Response, jsonify, request, send_file, send_from_direct
 from flask import stream_with_context
 
 # Pipeline modules print Unicode (e.g. '→') to stdout. On a Windows console using a
-# non-UTF-8 code page (cp1252) that raises UnicodeEncodeError mid-pipeline — which made
+# non-UTF-8 code page (cp1252) that raises UnicodeEncodeError mid-pipeline, which made
 # enrichment appear to fail and silently dropped CVE/EPSS/KEV data. Force UTF-8 output,
 # tolerating any console that can't be reconfigured (errors='backslashreplace' guarantees
 # a print can never raise on an un-encodable character).
@@ -61,9 +61,7 @@ _state: dict = {
     'prioritized': None,
 }
 
-# ---------------------------------------------------------------------------
 # Routes
-# ---------------------------------------------------------------------------
 
 @app.route('/')
 def index():
@@ -128,8 +126,9 @@ def events():
 @app.route('/download')
 def download():
     """
-    Serve one of the four output files.
-    Query param: file=normalized|enriched|annotated|prioritized  (default: prioritized)
+    Serve one of the output files.
+    Query param: file=normalized|enriched|annotated|prioritized|report|report_md
+    (default: prioritized)
     """
     FILE_MAP = {
         'normalized':  ('normalized_findings.jsonl',           'application/x-ndjson'),
@@ -152,9 +151,7 @@ def download():
     return jsonify({'error': f'{filename} not available yet.'}), 404
 
 
-# ---------------------------------------------------------------------------
 # Pipeline helpers
-# ---------------------------------------------------------------------------
 
 def _emit(event: dict):
     _event_queue.put(event)
@@ -176,9 +173,7 @@ def _is_stopped() -> bool:
     return run_scans.is_stop_requested()
 
 
-# ---------------------------------------------------------------------------
 # Scan pipeline (background thread)
-# ---------------------------------------------------------------------------
 
 def _run_pipeline(target: str):
     collected: dict = {
@@ -304,14 +299,10 @@ def _run_pipeline(target: str):
         _scan_running.clear()
 
 
-# ---------------------------------------------------------------------------
-# Normalize → Enrich → Prioritize
-# ---------------------------------------------------------------------------
+# Normalize, Enrich, Prioritize
 
 def _normalize_and_finish(collected: dict, stopped: bool):
-    # ------------------------------------------------------------------
     # Step: normalize
-    # ------------------------------------------------------------------
     _step_start('normalize', 'Normalizing Findings')
     all_findings_objs = []
     try:
@@ -346,9 +337,7 @@ def _normalize_and_finish(collected: dict, stopped: bool):
         _emit({'type': 'scan_error', 'message': f'Normalize failed: {e}'})
         return
 
-    # ------------------------------------------------------------------
     # Step: enrichment
-    # ------------------------------------------------------------------
     enriched_path   = OUTPUT_DIR / 'enriched_findings.jsonl'
     prioritizer_input = normalized_path
 
@@ -363,9 +352,7 @@ def _normalize_and_finish(collected: dict, stopped: bool):
         _log(f'Enrichment failed: {e} — falling back to normalized findings')
         _step_end('enrichment', 'error', str(e))
 
-    # ------------------------------------------------------------------
     # Step: prioritization
-    # ------------------------------------------------------------------
     _step_start('prioritization', 'Prioritization & Scoring')
     try:
         annotated_path, prioritized_path = prioritizer.prioritize(prioritizer_input)
@@ -385,9 +372,7 @@ def _normalize_and_finish(collected: dict, stopped: bool):
                   f"C:{pc.get('critical',0)} H:{pc.get('high',0)} "
                   f"M:{pc.get('medium',0)} L:{pc.get('low',0)} I:{pc.get('info',0)}")
 
-        # ------------------------------------------------------------------
         # Step: report generation (failure must not block the terminal event)
-        # ------------------------------------------------------------------
         _step_start('report', 'Report Generation')
         try:
             report_generator.generate_report(str(prioritized_path), str(OUTPUT_DIR))

@@ -1,8 +1,8 @@
 """
-enrichment.py — CVE/EPSS/KEV enrichment for normalized pipeline findings.
+enrichment.py: CVE/EPSS/KEV enrichment for normalized pipeline findings.
 
-Pipeline: extract_fingerprints → fingerprint_to_cpe → query_nvd →
-          query_epss (batched) → load_kev_catalog → enrichment JSONL records
+Pipeline: extract_fingerprints, fingerprint_to_cpe, query_nvd,
+          query_epss (batched), load_kev_catalog, then enrichment JSONL records.
 
 Public API:
   enrich_to_jsonl(input_path, output_path) -> int
@@ -30,10 +30,7 @@ import requests
 
 from parsers import AppVersionProbeFinding
 
-# ---------------------------------------------------------------------------
 # Paths
-# ---------------------------------------------------------------------------
-
 _SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(_SRC_DIR, '..', 'output')
 CACHE_DIR = os.path.join(OUTPUT_DIR, 'cache')
@@ -44,9 +41,7 @@ _KEV_CACHE = os.path.join(CACHE_DIR, 'kev')
 for _d in (_NVD_CACHE, _EPSS_CACHE, _KEV_CACHE):
     os.makedirs(_d, exist_ok=True)
 
-# ---------------------------------------------------------------------------
 # Data model
-# ---------------------------------------------------------------------------
 
 @dataclass
 class Fingerprint:
@@ -86,22 +81,19 @@ class EnrichmentFinding:
     references: list = field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
 # Constants
-# ---------------------------------------------------------------------------
-
 _NVD_API = 'https://services.nvd.nist.gov/rest/json/cves/2.0'
 _EPSS_API = 'https://api.first.org/data/v1/epss'
 _KEV_URL  = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json'
 
 _CACHE_TTL_SECS = 86_400  # 24 hours
 
-_NVD_API_KEY = os.getenv('NVD_API_KEY', '')
+_NVD_API_KEY = os.getenv('NVD_API_KEY', 'a3707536-db8c-492e-9bc7-207b01a5368d')
 _NVD_DELAY   = 6.5 if not _NVD_API_KEY else 0.7   # conservative inter-request gap
 
 _NVD_KEY_WARNING_DONE = False   # emit the "no API key" warning only once per process
 
-# Hardcoded CPE prefix map: product → (vendor, cpe_product)
+# Hardcoded CPE prefix map: product to (vendor, cpe_product).
 _CPE_MAP: dict[str, tuple[str, str]] = {
     'juice_shop':  ('owasp',     'juice_shop'),
     'wordpress':   ('wordpress', 'wordpress'),
@@ -131,9 +123,7 @@ _NUCLEI_VERSION_PATTERNS = (
 _REF_PRIORITY = ('nvd.nist.gov', 'cisa.gov', 'mitre.org', 'exploit-db.com')
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def _log(msg: str):
     line = f'[ENRICHMENT] {msg}'
@@ -209,16 +199,14 @@ def _normalise_product(raw: str) -> str:
 
 
 def _parse_tech_version(tech: str) -> tuple[str, str]:
-    """Split 'Product:1.2.3' → ('product', '1.2.3'). Returns ('product', '') if no version."""
+    """Split 'Product:1.2.3' into ('product', '1.2.3'). Returns ('product', '') if no version."""
     parts = tech.split(':', 1)
     product = _normalise_product(parts[0])
     version = parts[1].strip() if len(parts) == 2 else ''
     return product, version
 
 
-# ---------------------------------------------------------------------------
 # 3a. Fingerprint extraction
-# ---------------------------------------------------------------------------
 
 def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
     """
@@ -247,7 +235,7 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
     for f in findings:
         tool = f.get('tool', '')
 
-        # --- httpx: parse technologies list ---
+        # httpx: parse technologies list
         if tool == 'httpx':
             for tech in f.get('technologies', []):
                 product, version = _parse_tech_version(tech)
@@ -277,7 +265,7 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
                         url=f.get('url', ''),
                     ))
 
-        # --- nmap: product + version fields ---
+        # nmap: product + version fields
         elif tool == 'nmap':
             product = _normalise_product(f.get('product', ''))
             version = (f.get('version') or '').strip()
@@ -292,7 +280,7 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
                     url='',
                 ))
 
-        # --- nuclei: detect/version templates with extracted_results ---
+        # nuclei: detect/version templates with extracted_results
         elif tool == 'nuclei':
             tid = f.get('template_id', '')
             if not any(pat in tid for pat in _NUCLEI_VERSION_PATTERNS):
@@ -314,7 +302,7 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
                     url=f.get('matched_at', ''),
                 ))
 
-        # --- wpscan: use the version field added to WpscanFinding ---
+        # wpscan: use the version field added to WpscanFinding
         elif tool == 'wpscan':
             version = (f.get('version') or '').strip()
             if version:
@@ -328,7 +316,7 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
                     url=f.get('host', ''),
                 ))
 
-        # --- app_version_probe: already structured ---
+        # app_version_probe: already structured
         elif tool == 'app_version_probe':
             product = _normalise_product(f.get('product', ''))
             version = (f.get('version') or '').strip()
@@ -344,16 +332,14 @@ def extract_fingerprints(findings: list[dict]) -> list[Fingerprint]:
                     url=url_val,
                 ))
 
-    # Versioned fingerprints first — they produce more precise CPEs
+    # Versioned fingerprints first, since they produce more precise CPEs.
     fps.sort(key=lambda fp: (fp.version == '', fp.product))
     _log(f'Extracted {len(fps)} unique fingerprint(s): '
          + ', '.join(f'{fp.product}:{fp.version or "?"}' for fp in fps))
     return fps
 
 
-# ---------------------------------------------------------------------------
 # 3b. App-version probe
-# ---------------------------------------------------------------------------
 
 _APP_VERSION_PROBES = [
     ('/rest/admin/application-version',
@@ -483,9 +469,7 @@ def probe_app_versions(base_urls: list[str],
     return results
 
 
-# ---------------------------------------------------------------------------
 # 3c. CPE mapping
-# ---------------------------------------------------------------------------
 
 def fingerprint_to_cpe(fp: Fingerprint) -> Optional[str]:
     """Return a CPE 2.3 string for the fingerprint, or None if no confident mapping."""
@@ -498,9 +482,7 @@ def fingerprint_to_cpe(fp: Fingerprint) -> Optional[str]:
     return f'cpe:2.3:a:{vendor}:{cpe_product}:{version}:*:*:*:*:*:*:*'
 
 
-# ---------------------------------------------------------------------------
 # 3d. NVD lookup
-# ---------------------------------------------------------------------------
 
 def query_nvd(cpe: str) -> list[dict]:
     """
@@ -603,9 +585,7 @@ def query_nvd(cpe: str) -> list[dict]:
     return cves
 
 
-# ---------------------------------------------------------------------------
 # 3e. EPSS lookup
-# ---------------------------------------------------------------------------
 
 def query_epss(cve_ids: list[str]) -> dict[str, dict]:
     """
@@ -650,9 +630,7 @@ def query_epss(cve_ids: list[str]) -> dict[str, dict]:
     return {c: results[c] for c in cve_ids if c in results}
 
 
-# ---------------------------------------------------------------------------
 # 3f. CISA KEV catalog
-# ---------------------------------------------------------------------------
 
 def load_kev_catalog() -> dict[str, str]:
     """
@@ -679,17 +657,15 @@ def load_kev_catalog() -> dict[str, str]:
         return {}
 
 
-# ---------------------------------------------------------------------------
 # 3g. Build enrichment dicts (new schema for JSONL output)
-# ---------------------------------------------------------------------------
 
 def _build_enrichment_records(findings: list[dict]) -> list[dict]:
     """
     Core enrichment logic.  Extracts fingerprints, queries NVD/EPSS/KEV,
-    and returns a list of enrichment record dicts — one per CVE per fingerprint.
+    and returns a list of enrichment record dicts, one per CVE per fingerprint.
 
     Each record carries the fields expected by the prioritizer's CVE rule branch
-    (cve_id, cvss, epss, kev, …).  Empty/None fields are omitted.
+    (cve_id, cvss, epss, kev, and so on).  Empty/None fields are omitted.
     """
     _warn_no_api_key()
 
@@ -744,13 +720,13 @@ def _build_enrichment_records(findings: list[dict]) -> list[dict]:
             'cve_id':             cve_id,
         }
 
-        # host / url — omit if empty
+        # host / url: omit if empty
         if fp.host:
             rec['host'] = fp.host
         if fp.url:
             rec['url'] = fp.url
 
-        # CVSS fields — omit absent values
+        # CVSS fields: omit absent values
         if cve.get('cvss_score') is not None:
             rec['cvss'] = cve['cvss_score']
         if cve.get('cvss_version'):
@@ -789,9 +765,7 @@ def _build_enrichment_records(findings: list[dict]) -> list[dict]:
     return records
 
 
-# ---------------------------------------------------------------------------
-# 3h. Public pipeline API — enrich_to_jsonl
-# ---------------------------------------------------------------------------
+# 3h. Public pipeline API: enrich_to_jsonl
 
 def enrich_to_jsonl(input_path: Path, output_path: Path) -> int:
     """
@@ -799,8 +773,8 @@ def enrich_to_jsonl(input_path: Path, output_path: Path) -> int:
     pipeline, and write *enriched_findings.jsonl* at `output_path`.
 
     The output file contains:
-      • Every record from the input file (unchanged)
-      • One new ``tool="enrichment"`` record per CVE discovered
+      - Every record from the input file (unchanged)
+      - One new ``tool="enrichment"`` record per CVE discovered
 
     Returns the count of new enrichment records added.
     Raises only for I/O errors; NVD/EPSS/KEV failures are logged and skipped.
@@ -836,9 +810,7 @@ def enrich_to_jsonl(input_path: Path, output_path: Path) -> int:
     return len(new_records)
 
 
-# ---------------------------------------------------------------------------
 # 3i. Legacy in-memory orchestrator (backward compat)
-# ---------------------------------------------------------------------------
 
 def enrich(findings: list[dict]) -> list[EnrichmentFinding]:
     """
